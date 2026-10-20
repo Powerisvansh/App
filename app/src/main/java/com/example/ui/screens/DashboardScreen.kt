@@ -40,9 +40,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +74,9 @@ fun DashboardScreen(
     val serviceStatus by viewModel.serviceTrackingStatus.collectAsState()
     val lastLocationInfo by viewModel.lastLocationInfo.collectAsState()
     val useMetric by viewModel.useMetricUnits.collectAsState()
+
+    var showRenameCurrentDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var renameCurrentText by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
 
     val scrollState = rememberScrollState()
 
@@ -263,6 +268,20 @@ fun DashboardScreen(
                         )
                     }
 
+                    androidx.compose.material3.IconButton(
+                        onClick = {
+                            renameCurrentText = visit.placeName
+                            showRenameCurrentDialog = true
+                        },
+                        modifier = Modifier.testTag("rename_ongoing_place_button")
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Place Name",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = "Details",
@@ -432,6 +451,47 @@ fun DashboardScreen(
                     )
                 }
             }
+        }
+
+        // Rename Current Place Dialog
+        if (showRenameCurrentDialog && ongoingVisit != null) {
+            val visit = ongoingVisit!!
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showRenameCurrentDialog = false },
+                title = { Text("Name This Place") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Enter the real or custom name for this location (e.g., Nilokheri, Home, Office, Market):",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        androidx.compose.material3.OutlinedTextField(
+                            value = renameCurrentText,
+                            onValueChange = { renameCurrentText = it },
+                            label = { Text("Place Name") },
+                            modifier = Modifier.fillMaxWidth().testTag("rename_place_input")
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (renameCurrentText.isNotBlank()) {
+                                viewModel.updateVisit(visit.id, renameCurrentText.trim(), visit.address)
+                            }
+                            showRenameCurrentDialog = false
+                        },
+                        modifier = Modifier.testTag("confirm_rename_button")
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { showRenameCurrentDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
