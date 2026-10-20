@@ -1,0 +1,6 @@
+{
+  "name": "DailyTrack",
+  "description": "Personal Routine Tracker - Automatically record daily visits, routes, and timeline.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
