@@ -213,17 +213,22 @@ class LocationRepository(
             val sortedVisits = visits.sortedBy { it.arrivalTimeUtc }
 
             if (sortedVisits.isEmpty()) {
-                // If there are points but no visits yet, show single journey if available
+                // If there are points but no visits yet, show single journey with real location names
                 if (points.size >= 2) {
                     val first = points.first()
                     val last = points.last()
                     val dist = points.sumOf { it.distanceFromLastMeters }
                     val durSec = max(1L, (last.timestampUtc - first.timestampUtc) / 1000L)
                     val avgSpeedKmh = if (durSec > 0) (dist / durSec) * 3.6 else 0.0
+
+                    val fromName = geocodingService.getFastSynchronousName(first.latitude, first.longitude, isMovingOnRoad = false)
+                    val toName = geocodingService.getFastSynchronousName(last.latitude, last.longitude, isMovingOnRoad = (last.speed > 0.8f))
+                    val road = geocodingService.determineRoadForPath(points)
+
                     items.add(
                         TimelineItem.JourneyTimelineItem(
-                            fromPlaceName = "Starting point",
-                            toPlaceName = "Current location",
+                            fromPlaceName = fromName,
+                            toPlaceName = toName,
                             distanceMeters = dist,
                             durationSeconds = durSec,
                             startTimeUtc = first.timestampUtc,
@@ -234,6 +239,7 @@ class LocationRepository(
                             startLongitude = first.longitude,
                             endLatitude = last.latitude,
                             endLongitude = last.longitude,
+                            roadName = road,
                             waypoints = points.map { Pair(it.latitude, it.longitude) }
                         )
                     )
@@ -250,9 +256,11 @@ class LocationRepository(
                     val pStart = beforePoints.first()
                     val pEnd = beforePoints.last()
                     val dur = max(1L, (pEnd.timestampUtc - pStart.timestampUtc) / 1000L)
+                    val fromName = geocodingService.getFastSynchronousName(pStart.latitude, pStart.longitude, isMovingOnRoad = false)
+                    val road = geocodingService.determineRoadForPath(beforePoints)
                     items.add(
                         TimelineItem.JourneyTimelineItem(
-                            fromPlaceName = "Initial departure",
+                            fromPlaceName = fromName,
                             toPlaceName = firstVisit.placeName,
                             distanceMeters = dist,
                             durationSeconds = dur,
@@ -264,6 +272,7 @@ class LocationRepository(
                             startLongitude = pStart.longitude,
                             endLatitude = firstVisit.latitude,
                             endLongitude = firstVisit.longitude,
+                            roadName = road,
                             waypoints = beforePoints.map { Pair(it.latitude, it.longitude) }
                         )
                     )
@@ -297,6 +306,7 @@ class LocationRepository(
 
                     val journeyDuration = max(1L, (next.arrivalTimeUtc - departureTime) / 1000L)
                     val avgSpeedKmh = (journeyDistance / journeyDuration) * 3.6
+                    val road = geocodingService.determineRoadForPath(transitPoints)
 
                     items.add(
                         TimelineItem.JourneyTimelineItem(
@@ -312,6 +322,7 @@ class LocationRepository(
                             startLongitude = current.longitude,
                             endLatitude = next.latitude,
                             endLongitude = next.longitude,
+                            roadName = road,
                             waypoints = transitPoints.map { Pair(it.latitude, it.longitude) }
                         )
                     )
@@ -328,10 +339,12 @@ class LocationRepository(
                         val pStart = afterPoints.first()
                         val pEnd = afterPoints.last()
                         val dur = max(1L, (pEnd.timestampUtc - pStart.timestampUtc) / 1000L)
+                        val toName = geocodingService.getFastSynchronousName(pEnd.latitude, pEnd.longitude, isMovingOnRoad = (pEnd.speed > 0.8f))
+                        val road = geocodingService.determineRoadForPath(afterPoints)
                         items.add(
                             TimelineItem.JourneyTimelineItem(
                                 fromPlaceName = lastVisit.placeName,
-                                toPlaceName = "In transit",
+                                toPlaceName = toName,
                                 distanceMeters = dist,
                                 durationSeconds = dur,
                                 startTimeUtc = pStart.timestampUtc,
@@ -342,6 +355,7 @@ class LocationRepository(
                                 startLongitude = lastVisit.longitude,
                                 endLatitude = pEnd.latitude,
                                 endLongitude = pEnd.longitude,
+                                roadName = road,
                                 waypoints = afterPoints.map { Pair(it.latitude, it.longitude) }
                             )
                         )
@@ -355,7 +369,7 @@ class LocationRepository(
 
     suspend fun exportAsJson(): String = withContext(Dispatchers.IO) {
         val root = JSONObject()
-        root.put("app", "DailyTrack")
+        root.put("app", "vansh final")
         root.put("exportedAtUtc", System.currentTimeMillis())
         root.put("version", "1.0")
 

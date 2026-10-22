@@ -55,6 +55,7 @@ fun MapViewScreen(
     val points by viewModel.selectedDayRoutePoints.collectAsState()
     val summary by viewModel.selectedDaySummary.collectAsState()
     val useMetric by viewModel.useMetricUnits.collectAsState()
+    val lastLocationInfo by viewModel.lastLocationInfo.collectAsState()
 
     val dateFmt = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
     val dateLabel = dateFmt.format(Date(selectedDateUtc))
@@ -110,80 +111,38 @@ fun MapViewScreen(
             InteractiveRouteCanvas(
                 points = points,
                 visits = summary.visits,
+                currentLocation = lastLocationInfo,
                 modifier = Modifier.fillMaxSize(),
                 onVisitSelected = { visit ->
                     onNavigate(Screen.PlaceDetails(visit.id))
                 }
             )
 
-            // Top-left map legend indicator
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                modifier = Modifier
-                    .padding(12.dp)
-                    .align(Alignment.TopStart)
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.secondary)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Visited Place", style = MaterialTheme.typography.labelSmall)
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .width(12.dp)
-                                .height(3.dp)
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Travel Route", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-
-            // If no points or visits recorded for day, show overlay guide
+            // If no recorded route points for this selected past day, show non-intrusive floating guide
             if (points.isEmpty() && summary.visits.isEmpty()) {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
-                    ),
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Black.copy(alpha = 0.78f),
+                    shadowElevation = 6.dp,
                     modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(24.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 20.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             Icons.Default.Route,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(36.dp)
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "No GPS Route Recorded For $dateLabel",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Ensure location tracking is enabled in Settings to record your path.",
+                            text = "No route points recorded on $dateLabel",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color.White
                         )
                     }
                 }

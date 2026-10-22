@@ -44,8 +44,9 @@ Here is how **DailyTrack** captures an everyday commute (e.g., living in **Nilok
                  ▼ Departure detected (>45m movement threshold)
 ┌─────────────────────────────────┐
 │ 2. Journey: Nilokheri ➔ Karnal   │ ── Distance: 18.4 km
-│    • Time: 10:00 AM – 10:28 AM  │    • Duration: 28 mins
-│    • Avg Speed: 39.4 km/h       │    • GPS Points: 86
+│    • Road / Via: GT Road (NH 44) │    • Duration: 28 mins
+│    • Time: 10:00 AM – 10:28 AM  │    • Avg Speed: 39.4 km/h
+│    • Status: On GT Road (Moving) │    • GPS Points: 86
 │    • [Open in Google Maps] ───┐ │
 └───────────────────────────────┼─┘
                                 │ ── Launch Turn-by-Turn Navigation

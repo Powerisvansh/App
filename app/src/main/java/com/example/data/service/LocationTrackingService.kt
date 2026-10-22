@@ -202,7 +202,7 @@ class LocationTrackingService : Service() {
         val pauseResumeActionTitle = if (_isPaused.value) "Resume" else "Pause"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("DailyTrack - Routine Tracking")
+            .setContentTitle("vansh final - Routine Tracking")
             .setContentText(contentText)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
@@ -274,15 +274,33 @@ class LocationTrackingService : Service() {
                     dwellTimeMinutes = dwell
                 )
 
+                val isMoving = point.speed > 0.8f
+                val geoResult = app.geocodingService.getPlaceAndAddress(point.latitude, point.longitude)
+                val fastName = app.geocodingService.getFastSynchronousName(point.latitude, point.longitude, isMovingOnRoad = isMoving)
+                val resolvedPlaceName = when {
+                    visit != null -> visit.placeName
+                    geoResult.placeName.isNotBlank() && !geoResult.placeName.startsWith("Location (") -> geoResult.placeName
+                    else -> fastName
+                }
+                val resolvedRoadName = geoResult.roadName.ifBlank {
+                    app.geocodingService.getFastRoadName(point.latitude, point.longitude)
+                }
+
                 val statusText: String
                 val placeDesc: String
+                val roadDesc = resolvedRoadName
+
                 if (visit != null) {
                     val durationMin = visit.durationSeconds / 60
                     placeDesc = visit.placeName
                     statusText = "At ${visit.placeName} (${durationMin}m)"
+                } else if (isMoving) {
+                    placeDesc = if (roadDesc.isNotBlank()) "On $roadDesc, $resolvedPlaceName" else resolvedPlaceName
+                    val speedKmh = (point.speed * 3.6f).toInt()
+                    statusText = if (roadDesc.isNotBlank()) "Moving on $roadDesc ($speedKmh km/h)" else "Moving near $resolvedPlaceName ($speedKmh km/h)"
                 } else {
-                    placeDesc = "In Transit / Moving"
-                    statusText = String.format(Locale.US, "Moving (Speed: %.1f km/h)", point.speed * 3.6f)
+                    placeDesc = resolvedPlaceName
+                    statusText = "Near $resolvedPlaceName"
                 }
 
                 _trackingStatus.value = statusText
@@ -294,6 +312,7 @@ class LocationTrackingService : Service() {
                     accuracy = point.accuracy,
                     timestampUtc = point.timestampUtc,
                     placeName = placeDesc,
+                    roadName = roadDesc,
                     statusMessage = statusText
                 )
             } catch (e: Exception) {
@@ -323,7 +342,7 @@ class LocationTrackingService : Service() {
                 "Ongoing Location Tracking",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows real-time status of DailyTrack background routine recording."
+                description = "Shows real-time status of vansh final background routine recording."
                 setShowBadge(false)
             }
             notificationManager.createNotificationChannel(channel)

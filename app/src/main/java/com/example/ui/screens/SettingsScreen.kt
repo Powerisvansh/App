@@ -365,7 +365,7 @@ fun SettingsScreen(
                         onClick = {
                             scope.launch {
                                 val csv = viewModel.exportCsv()
-                                shareExport(csv, "text/csv", "Export DailyTrack CSV")
+                                shareExport(csv, "text/csv", "Export vansh final CSV")
                             }
                         },
                         modifier = Modifier
@@ -381,7 +381,7 @@ fun SettingsScreen(
                         onClick = {
                             scope.launch {
                                 val json = viewModel.exportJson()
-                                shareExport(json, "application/json", "Export DailyTrack JSON")
+                                shareExport(json, "application/json", "Export vansh final JSON")
                             }
                         },
                         modifier = Modifier

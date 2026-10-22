@@ -81,7 +81,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5000),
-            LastLocationInfo(0.0, 0.0, 0f, 0L, "", "Idle")
+            LastLocationInfo(
+                latitude = 0.0,
+                longitude = 0.0,
+                accuracy = 0f,
+                timestampUtc = 0L,
+                placeName = "",
+                roadName = "",
+                statusMessage = "Idle"
+            )
         )
 
     // Service tracking status
@@ -205,7 +213,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .addOnSuccessListener { loc ->
                         if (loc != null) {
                             viewModelScope.launch {
-                                repository.recordLocation(loc)
+                                val (point, visit) = repository.recordLocation(loc)
+                                val geo = app.geocodingService.getPlaceAndAddress(loc.latitude, loc.longitude)
+                                val isMoving = loc.speed > 0.8f
+                                val resolvedPlace = when {
+                                    visit != null -> visit.placeName
+                                    geo.placeName.isNotBlank() && !geo.placeName.startsWith("Location (") -> geo.placeName
+                                    else -> app.geocodingService.getFastSynchronousName(loc.latitude, loc.longitude, isMoving)
+                                }
+                                val resolvedRoad = geo.roadName.ifBlank {
+                                    app.geocodingService.getFastRoadName(loc.latitude, loc.longitude)
+                                }
+                                val status = if (visit != null) {
+                                    "At ${visit.placeName}"
+                                } else if (isMoving && resolvedRoad.isNotBlank()) {
+                                    "Moving on $resolvedRoad"
+                                } else {
+                                    "Near $resolvedPlace"
+                                }
+                                prefs.updateLastLocation(
+                                    latitude = loc.latitude,
+                                    longitude = loc.longitude,
+                                    accuracy = loc.accuracy,
+                                    timestampUtc = System.currentTimeMillis(),
+                                    placeName = resolvedPlace,
+                                    roadName = resolvedRoad,
+                                    statusMessage = status
+                                )
                             }
                         }
                     }

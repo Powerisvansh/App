@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "DailyTrack"
+rootProject.name = "vansh final"
 
 include(":app")

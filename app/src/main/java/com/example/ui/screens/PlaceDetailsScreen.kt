@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import com.example.ui.components.InteractiveRouteCanvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -209,6 +210,20 @@ fun PlaceDetailsScreen(
                         }
                     }
                 }
+            }
+
+            // Satellite Aerial Map Preview Card
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(210.dp)
+            ) {
+                InteractiveRouteCanvas(
+                    points = emptyList(),
+                    visits = listOf(v),
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             // 2. Time & Duration Card

@@ -24,6 +24,7 @@ sealed class TimelineItem {
         val startLongitude: Double = 0.0,
         val endLatitude: Double = 0.0,
         val endLongitude: Double = 0.0,
+        val roadName: String = "",
         val waypoints: List<Pair<Double, Double>> = emptyList()
     ) : TimelineItem() {
         override val timestampUtc: Long = startTimeUtc

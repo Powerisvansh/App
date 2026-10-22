@@ -84,9 +84,12 @@ class MainActivity : ComponentActivity() {
 
                     if (!fineLocationGranted && !hasCompletedOnboarding) {
                         viewModel.showPermissionsDialog(true)
-                    } else if (fineLocationGranted && isTrackingEnabled && !isServiceRunning && !isTrackingPaused) {
-                        // Automatically resume ongoing tracking service
-                        LocationTrackingService.startService(this@MainActivity)
+                    } else if (fineLocationGranted) {
+                        viewModel.refreshRealLocation()
+                        if (isTrackingEnabled && !isServiceRunning && !isTrackingPaused) {
+                            // Automatically resume ongoing tracking service
+                            LocationTrackingService.startService(this@MainActivity)
+                        }
                     }
                 }
 
@@ -107,7 +110,7 @@ class MainActivity : ComponentActivity() {
                                 title = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "DailyTrack",
+                                            text = "vansh final",
                                             fontWeight = FontWeight.Bold,
                                             style = MaterialTheme.typography.titleLarge
                                         )

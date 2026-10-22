@@ -37,10 +37,10 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun readStringFromContext_matchesDailyTrack() {
+    fun readStringFromContext_matchesAppName() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("DailyTrack", appName)
+        assertEquals("vansh final", appName)
     }
 
     @Test

@@ -76,7 +76,7 @@ fun PermissionsPromptDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "DailyTrack requires location access to automatically detect places you visit, record daily routes, and calculate arrival/departure times.",
+                    text = "vansh final requires location access to automatically detect places you visit, record daily routes, and calculate arrival/departure times.",
                     style = MaterialTheme.typography.bodyMedium
                 )
 

@@ -34,6 +34,7 @@ class UserPreferencesRepository(private val context: Context) {
         val LAST_ACCURACY = floatPreferencesKey("last_accuracy")
         val LAST_UPDATE_TIME_UTC = longPreferencesKey("last_update_time_utc")
         val LAST_PLACE_NAME = stringPreferencesKey("last_place_name")
+        val LAST_ROAD_NAME = stringPreferencesKey("last_road_name")
         val STATUS_MESSAGE = stringPreferencesKey("status_message")
     }
 
@@ -80,6 +81,7 @@ class UserPreferencesRepository(private val context: Context) {
             accuracy = prefs[PreferencesKeys.LAST_ACCURACY] ?: 0f,
             timestampUtc = prefs[PreferencesKeys.LAST_UPDATE_TIME_UTC] ?: 0L,
             placeName = prefs[PreferencesKeys.LAST_PLACE_NAME] ?: "",
+            roadName = prefs[PreferencesKeys.LAST_ROAD_NAME] ?: "",
             statusMessage = prefs[PreferencesKeys.STATUS_MESSAGE] ?: "Tracking Idle"
         )
     }
@@ -147,6 +149,7 @@ class UserPreferencesRepository(private val context: Context) {
         accuracy: Float,
         timestampUtc: Long,
         placeName: String,
+        roadName: String = "",
         statusMessage: String
     ) {
         context.dataStore.edit { prefs ->
@@ -155,6 +158,7 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferencesKeys.LAST_ACCURACY] = accuracy
             prefs[PreferencesKeys.LAST_UPDATE_TIME_UTC] = timestampUtc
             prefs[PreferencesKeys.LAST_PLACE_NAME] = placeName
+            prefs[PreferencesKeys.LAST_ROAD_NAME] = roadName
             prefs[PreferencesKeys.STATUS_MESSAGE] = statusMessage
         }
     }
@@ -166,5 +170,6 @@ data class LastLocationInfo(
     val accuracy: Float,
     val timestampUtc: Long,
     val placeName: String,
+    val roadName: String = "",
     val statusMessage: String
 )
