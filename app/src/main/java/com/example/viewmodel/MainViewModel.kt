@@ -10,6 +10,7 @@ import com.example.data.preferences.LastLocationInfo
 import com.example.data.service.LocationTrackingService
 import com.example.domain.model.DailySummary
 import com.example.domain.model.TimelineItem
+import com.example.domain.model.TripRecord
 import com.example.ui.navigation.Screen
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -144,6 +145,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.searchVisits(query.trim())
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allTripTracks: StateFlow<List<TripRecord>> = repository.getAllTripTracksFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun navigateTo(screen: Screen) {
         if (_currentScreen.value != screen) {

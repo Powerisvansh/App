@@ -19,6 +19,9 @@ interface LocationPointDao {
     @Query("SELECT * FROM location_points WHERE timestampUtc BETWEEN :startUtc AND :endUtc ORDER BY timestampUtc ASC")
     fun getPointsForDateRange(startUtc: Long, endUtc: Long): Flow<List<LocationPointEntity>>
 
+    @Query("SELECT * FROM location_points ORDER BY timestampUtc ASC")
+    fun getAllPointsFlow(): Flow<List<LocationPointEntity>>
+
     @Query("SELECT * FROM location_points WHERE timestampUtc BETWEEN :startUtc AND :endUtc ORDER BY timestampUtc ASC")
     suspend fun getPointsBetweenSync(startUtc: Long, endUtc: Long): List<LocationPointEntity>
 

@@ -55,7 +55,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,25 +106,23 @@ fun InteractiveRouteCanvas(
     val tileManager = remember { MapTileManager(context) }
 
     // Map state: center (lat, lon), zoom (Float), and layer
-    var centerLat by remember { mutableStateOf(28.6139) } // Default fallback (e.g. Karnal/Delhi region or user position)
+    var centerLat by remember { mutableStateOf(28.6139) }
     var centerLon by remember { mutableStateOf(77.2090) }
-    var zoomLevel by remember { mutableFloatStateOf(14.5f) }
-    var mapLayer by remember { mutableStateOf(MapLayerType.SATELLITE) }
+    var zoomLevel by remember { mutableFloatStateOf(15.0f) }
+    var mapLayer by remember { mutableStateOf(MapLayerType.HYBRID) } // Real Google Maps Satellite with roads & labels
     var showLayerMenu by remember { mutableStateOf(false) }
 
     var selectedVisit by remember { mutableStateOf<VisitEntity?>(null) }
     var hasAutoCentered by remember { mutableStateOf(false) }
 
-    // Version tick to trigger redraw when new tiles arrive
-    var tileRefreshTrigger by remember { mutableIntStateOf(0) }
+    // Memory tile cache map that triggers Compose snapshot redraws when new tiles load
     val loadedTiles = remember { mutableStateMapOf<String, Bitmap>() }
-    val loadedOverlays = remember { mutableStateMapOf<String, Bitmap>() }
 
-    // Pulsing transition for live user GPS pin
+    // Pulsing transition for live user GPS beacon
     val infiniteTransition = rememberInfiniteTransition(label = "gps_beacon")
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 1.4f,
+        initialValue = 0.85f,
+        targetValue = 1.35f,
         animationSpec = infiniteRepeatable(
             animation = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -133,7 +130,7 @@ fun InteractiveRouteCanvas(
         label = "pulse_scale"
     )
 
-    // Calculate initial center and bounds
+    // Center on route or user's live position
     LaunchedEffect(points, visits, currentLocation) {
         if (!hasAutoCentered) {
             val allLats = points.map { it.latitude } + visits.map { it.latitude }
@@ -165,100 +162,16 @@ fun InteractiveRouteCanvas(
             .fillMaxSize()
             .testTag("interactive_route_canvas")
     ) {
-        val viewportW = constraints.maxWidth.toFloat()
-        val viewportH = constraints.maxHeight.toFloat()
+        val viewportW = constraints.maxWidth.toFloat().coerceAtLeast(100f)
+        val viewportH = constraints.maxHeight.toFloat().coerceAtLeast(100f)
 
-        // Visit positions on screen for tap detection
-        var visitScreenPositions by remember { mutableStateOf<List<Pair<VisitEntity, Offset>>>(emptyList()) }
+        // Compute visible tile coordinates for current viewport & zoom
+        val baseZoom = zoomLevel.toInt().coerceIn(1, 19)
+        val subScale = Math.pow(2.0, (zoomLevel - baseZoom).toDouble()).toFloat()
+        val tileSizeOnScreen = (MapProjection.TILE_SIZE * subScale).toFloat()
 
-        // Combined gestures: Drag to pan, Pinch to zoom
-        val gestureModifier = Modifier.pointerInput(centerLat, centerLon, zoomLevel) {
-            detectTransformGestures { _, pan, zoomChange, _ ->
-                // Apply zoom
-                if (zoomChange != 1.0f) {
-                    zoomLevel = (zoomLevel * zoomChange).coerceIn(2.5f, 18.5f)
-                }
-
-                // Apply pan
-                if (pan != Offset.Zero) {
-                    val (newLat, newLon) = MapProjection.screenToLatLon(
-                        screenOffset = Offset(viewportW / 2f - pan.x, viewportH / 2f - pan.y),
-                        centerLat = centerLat,
-                        centerLon = centerLon,
-                        zoom = zoomLevel,
-                        viewportWidth = viewportW,
-                        viewportHeight = viewportH
-                    )
-                    centerLat = newLat
-                    centerLon = newLon
-                }
-            }
-        }
-
-        // Tap gestures for selecting visit pins and double-tap to zoom
-        val tapModifier = Modifier.pointerInput(centerLat, centerLon, zoomLevel, visitScreenPositions) {
-            detectTapGestures(
-                onDoubleTap = { tapOffset ->
-                    val (tapLat, tapLon) = MapProjection.screenToLatLon(
-                        screenOffset = tapOffset,
-                        centerLat = centerLat,
-                        centerLon = centerLon,
-                        zoom = zoomLevel,
-                        viewportWidth = viewportW,
-                        viewportHeight = viewportH
-                    )
-                    centerLat = tapLat
-                    centerLon = tapLon
-                    zoomLevel = (zoomLevel + 1.2f).coerceAtMost(18.5f)
-                },
-                onTap = { tapOffset ->
-                    val hit = visitScreenPositions.find { (_, pinOffset) ->
-                        hypot((tapOffset.x - pinOffset.x).toDouble(), (tapOffset.y - pinOffset.y).toDouble()) <= 45.0
-                    }
-                    if (hit != null) {
-                        selectedVisit = hit.first
-                        onVisitSelected(hit.first)
-                    } else {
-                        selectedVisit = null
-                    }
-                }
-            )
-        }
-
-        // Map Canvas: renders Satellite tiles, polylines, visited places, and live user location
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(gestureModifier)
-                .then(tapModifier)
-        ) {
-            // Read trigger to recompose when tiles load
-            val currentTrigger = tileRefreshTrigger
-            if (currentTrigger < 0) return@Canvas
-
-            val baseZoom = zoomLevel.toInt().coerceIn(1, 18)
-            val subScale = Math.pow(2.0, (zoomLevel - baseZoom).toDouble()).toFloat()
-            val tileSizeOnScreen = (MapProjection.TILE_SIZE * subScale).toFloat()
-
-            // 1. Draw Satellite Terrain Base / Realistic aerial background
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = when (mapLayer) {
-                        MapLayerType.SATELLITE, MapLayerType.HYBRID -> listOf(
-                            Color(0xFF0F1E26),
-                            Color(0xFF132A38),
-                            Color(0xFF193444)
-                        )
-                        MapLayerType.STREET -> listOf(
-                            Color(0xFFE8ECEF),
-                            Color(0xFFDCE2E6)
-                        )
-                    }
-                ),
-                size = Size(viewportW, viewportH)
-            )
-
-            // 2. Compute visible tile bounds
+        val visibleTiles = remember(centerLat, centerLon, zoomLevel, viewportW, viewportH) {
+            val maxTiles = (1 shl baseZoom) - 1
             val topLeftCoord = MapProjection.screenToLatLon(
                 screenOffset = Offset(-tileSizeOnScreen, -tileSizeOnScreen),
                 centerLat = centerLat,
@@ -276,93 +189,162 @@ fun InteractiveRouteCanvas(
                 viewportHeight = viewportH
             )
 
-            val maxTiles = (1 shl baseZoom) - 1
             val minTileX = ((topLeftCoord.second + 180.0) / 360.0 * (1 shl baseZoom)).toInt().coerceIn(0, maxTiles)
             val maxTileX = ((bottomRightCoord.second + 180.0) / 360.0 * (1 shl baseZoom)).toInt().coerceIn(0, maxTiles)
 
-            // Web Mercator tile Y increases downwards
             val topPxY = MapProjection.latToWorldPixelY(topLeftCoord.first, baseZoom)
             val bottomPxY = MapProjection.latToWorldPixelY(bottomRightCoord.first, baseZoom)
             val minTileY = (topPxY / MapProjection.TILE_SIZE).toInt().coerceIn(0, maxTiles)
             val maxTileY = (bottomPxY / MapProjection.TILE_SIZE).toInt().coerceIn(0, maxTiles)
 
-            // Draw Satellite / Aerial Tiles
+            val tiles = mutableListOf<TileCoord>()
             for (ty in min(minTileY, maxTileY)..max(minTileY, maxTileY)) {
                 for (tx in min(minTileX, maxTileX)..max(minTileX, maxTileX)) {
-                    val tile = TileCoord(baseZoom, tx, ty)
-                    val tileKey = "${mapLayer.name}_${baseZoom}_${tx}_${ty}"
+                    tiles.add(TileCoord(baseZoom, tx, ty))
+                }
+            }
+            tiles
+        }
 
-                    // Convert tile NW corner to screen coordinates
-                    val nwLat = MapProjection.worldPixelYToLat(ty * MapProjection.TILE_SIZE, baseZoom)
-                    val nwLon = MapProjection.worldPixelXToLon(tx * MapProjection.TILE_SIZE, baseZoom)
-                    val screenNW = MapProjection.latLonToScreen(
-                        lat = nwLat,
-                        lon = nwLon,
+        // Active Tile Pre-fetcher in Composable coroutine
+        LaunchedEffect(visibleTiles, mapLayer) {
+            for (tile in visibleTiles) {
+                val key = "${mapLayer.name}_${tile.z}_${tile.x}_${tile.y}"
+                if (!loadedTiles.containsKey(key)) {
+                    val cached = tileManager.getCachedTile(tile, mapLayer)
+                    if (cached != null) {
+                        loadedTiles[key] = cached
+                    } else {
+                        tileManager.requestTile(tile, mapLayer) { loadedCoord, loadedBmp ->
+                            val k = "${mapLayer.name}_${loadedCoord.z}_${loadedCoord.x}_${loadedCoord.y}"
+                            loadedTiles[k] = loadedBmp
+                        }
+                    }
+                }
+            }
+        }
+
+        var visitScreenPositions by remember { mutableStateOf<List<Pair<VisitEntity, Offset>>>(emptyList()) }
+
+        // Gestures: Drag to pan, Pinch to zoom
+        val gestureModifier = Modifier.pointerInput(centerLat, centerLon, zoomLevel) {
+            detectTransformGestures { _, pan, zoomChange, _ ->
+                if (zoomChange != 1.0f) {
+                    zoomLevel = (zoomLevel * zoomChange).coerceIn(2.5f, 19.0f)
+                }
+                if (pan != Offset.Zero) {
+                    val (newLat, newLon) = MapProjection.screenToLatLon(
+                        screenOffset = Offset(viewportW / 2f - pan.x, viewportH / 2f - pan.y),
                         centerLat = centerLat,
                         centerLon = centerLon,
                         zoom = zoomLevel,
                         viewportWidth = viewportW,
                         viewportHeight = viewportH
                     )
+                    centerLat = newLat
+                    centerLon = newLon
+                }
+            }
+        }
 
-                    var bitmap = loadedTiles[tileKey]
-                    if (bitmap == null) {
-                        bitmap = tileManager.getCachedTile(tile, mapLayer)
-                        if (bitmap != null) {
-                            loadedTiles[tileKey] = bitmap
-                        } else {
-                            tileManager.requestTile(tile, mapLayer) { loadedCoord, loadedBmp ->
-                                val key = "${mapLayer.name}_${loadedCoord.z}_${loadedCoord.x}_${loadedCoord.y}"
-                                loadedTiles[key] = loadedBmp
-                                tileRefreshTrigger++
-                            }
-                        }
+        // Tap gestures: select visit pins & double-tap to zoom in
+        val tapModifier = Modifier.pointerInput(centerLat, centerLon, zoomLevel, visitScreenPositions) {
+            detectTapGestures(
+                onDoubleTap = { tapOffset ->
+                    val (tapLat, tapLon) = MapProjection.screenToLatLon(
+                        screenOffset = tapOffset,
+                        centerLat = centerLat,
+                        centerLon = centerLon,
+                        zoom = zoomLevel,
+                        viewportWidth = viewportW,
+                        viewportHeight = viewportH
+                    )
+                    centerLat = tapLat
+                    centerLon = tapLon
+                    zoomLevel = (zoomLevel + 1.2f).coerceAtMost(19.0f)
+                },
+                onTap = { tapOffset ->
+                    val hit = visitScreenPositions.find { (_, pinOffset) ->
+                        hypot((tapOffset.x - pinOffset.x).toDouble(), (tapOffset.y - pinOffset.y).toDouble()) <= 45.0
                     }
-
-                    if (bitmap != null && !bitmap.isRecycled) {
-                        // Draw high-resolution satellite imagery tile
-                        drawImage(
-                            image = bitmap.asImageBitmap(),
-                            dstOffset = IntOffset(screenNW.x.roundToInt(), screenNW.y.roundToInt()),
-                            dstSize = IntSize((tileSizeOnScreen + 1f).roundToInt(), (tileSizeOnScreen + 1f).roundToInt())
-                        )
+                    if (hit != null) {
+                        selectedVisit = hit.first
+                        onVisitSelected(hit.first)
                     } else {
-                        // Drawing realistic satellite terrain placeholder while loading
-                        drawRect(
-                            color = if (mapLayer == MapLayerType.STREET) Color(0xFFE4E9EC) else Color(0xFF142733),
-                            topLeft = screenNW,
-                            size = Size(tileSizeOnScreen, tileSizeOnScreen)
-                        )
-                        drawRect(
-                            color = Color.White.copy(alpha = 0.05f),
-                            topLeft = screenNW,
-                            size = Size(tileSizeOnScreen, tileSizeOnScreen),
-                            style = Stroke(width = 1f)
-                        )
+                        selectedVisit = null
                     }
+                }
+            )
+        }
 
-                    // For HYBRID layer, draw overlay roads & place labels
-                    if (mapLayer == MapLayerType.HYBRID) {
-                        val overlayKey = "HYBRID_${baseZoom}_${tx}_${ty}"
-                        var overlayBmp = loadedOverlays[overlayKey]
-                        if (overlayBmp == null) {
-                            tileManager.requestOverlayTile(tile) { coord, bmp ->
-                                val key = "HYBRID_${coord.z}_${coord.x}_${coord.y}"
-                                loadedOverlays[key] = bmp
-                                tileRefreshTrigger++
-                            }
-                        } else if (!overlayBmp.isRecycled) {
-                            drawImage(
-                                image = overlayBmp.asImageBitmap(),
-                                dstOffset = IntOffset(screenNW.x.roundToInt(), screenNW.y.roundToInt()),
-                                dstSize = IntSize((tileSizeOnScreen + 1f).roundToInt(), (tileSizeOnScreen + 1f).roundToInt())
-                            )
-                        }
+        // Canvas: Draws real Google satellite tiles, glowing routes, and GPS pins
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(gestureModifier)
+                .then(tapModifier)
+        ) {
+            // 1. Draw realistic satellite aerial terrain background
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = when (mapLayer) {
+                        MapLayerType.HYBRID, MapLayerType.SATELLITE -> listOf(
+                            Color(0xFF0D1B22),
+                            Color(0xFF11252F),
+                            Color(0xFF162D38)
+                        )
+                        MapLayerType.STREET -> listOf(
+                            Color(0xFFF1F3F4),
+                            Color(0xFFE8EAED)
+                        )
                     }
+                ),
+                size = Size(viewportW, viewportH)
+            )
+
+            // 2. Draw Google Maps Satellite / Hybrid tiles
+            for (tile in visibleTiles) {
+                val tileKey = "${mapLayer.name}_${tile.z}_${tile.x}_${tile.y}"
+
+                val nwLat = MapProjection.worldPixelYToLat(tile.y * MapProjection.TILE_SIZE, tile.z)
+                val nwLon = MapProjection.worldPixelXToLon(tile.x * MapProjection.TILE_SIZE, tile.z)
+                val screenNW = MapProjection.latLonToScreen(
+                    lat = nwLat,
+                    lon = nwLon,
+                    centerLat = centerLat,
+                    centerLon = centerLon,
+                    zoom = zoomLevel,
+                    viewportWidth = viewportW,
+                    viewportHeight = viewportH
+                )
+
+                val bitmap = loadedTiles[tileKey] ?: tileManager.getCachedTile(tile, mapLayer)
+                if (bitmap != null && !bitmap.isRecycled) {
+                    if (!loadedTiles.containsKey(tileKey)) {
+                        loadedTiles[tileKey] = bitmap
+                    }
+                    drawImage(
+                        image = bitmap.asImageBitmap(),
+                        dstOffset = IntOffset(screenNW.x.roundToInt(), screenNW.y.roundToInt()),
+                        dstSize = IntSize((tileSizeOnScreen + 1f).roundToInt(), (tileSizeOnScreen + 1f).roundToInt())
+                    )
+                } else {
+                    // Realistic terrain placeholder while downloading
+                    drawRect(
+                        color = if (mapLayer == MapLayerType.STREET) Color(0xFFE4E9EC) else Color(0xFF132835),
+                        topLeft = screenNW,
+                        size = Size(tileSizeOnScreen, tileSizeOnScreen)
+                    )
+                    drawRect(
+                        color = Color.White.copy(alpha = 0.04f),
+                        topLeft = screenNW,
+                        size = Size(tileSizeOnScreen, tileSizeOnScreen),
+                        style = Stroke(width = 1f)
+                    )
                 }
             }
 
-            // 3. Draw Travel Route Polyline with Neon Contrast Halo
+            // 3. Draw Travel Route Polyline with Vibrant Glowing Halo
             if (points.size >= 2) {
                 val routePath = Path()
                 val firstScr = MapProjection.latLonToScreen(
@@ -390,40 +372,40 @@ fun InteractiveRouteCanvas(
                     routePath.lineTo(scr.x, scr.y)
                 }
 
-                // Outer high-contrast shadow/border (makes route visible over both dark satellite forests and bright deserts/cities)
+                // Dark outer outline for maximum contrast over bright satellite fields and dark water
                 drawPath(
                     path = routePath,
-                    color = Color.Black.copy(alpha = 0.65f),
+                    color = Color.Black.copy(alpha = 0.75f),
                     style = Stroke(
-                        width = 12f,
+                        width = 13f,
                         cap = StrokeCap.Round,
                         join = StrokeJoin.Round
                     )
                 )
 
-                // Neon glowing accent border
+                // Vibrant Google Maps Electric Blue glow
                 drawPath(
                     path = routePath,
-                    color = Color(0xFF00E5FF).copy(alpha = 0.5f),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.55f),
                     style = Stroke(
-                        width = 8f,
+                        width = 9f,
                         cap = StrokeCap.Round,
                         join = StrokeJoin.Round
                     )
                 )
 
-                // Main vibrant route polyline (Electric Cyan / Google Maps Style)
+                // Core crisp polyline
                 drawPath(
                     path = routePath,
                     color = Color(0xFF00E5FF),
                     style = Stroke(
-                        width = 4.5f,
+                        width = 5f,
                         cap = StrokeCap.Round,
                         join = StrokeJoin.Round
                     )
                 )
 
-                // GPS breadcrumb dots along the route
+                // Breadcrumb dots
                 for (pt in points) {
                     val p = MapProjection.latLonToScreen(
                         lat = pt.latitude,
@@ -434,20 +416,12 @@ fun InteractiveRouteCanvas(
                         viewportWidth = viewportW,
                         viewportHeight = viewportH
                     )
-                    drawCircle(
-                        color = Color.Black.copy(alpha = 0.6f),
-                        radius = 4f,
-                        center = p
-                    )
-                    drawCircle(
-                        color = Color(0xFFE0F7FA),
-                        radius = 2.5f,
-                        center = p
-                    )
+                    drawCircle(color = Color.Black.copy(alpha = 0.6f), radius = 4f, center = p)
+                    drawCircle(color = Color.White, radius = 2.5f, center = p)
                 }
             }
 
-            // 4. Draw Visited Place Pins with Names & Numbers
+            // 4. Draw Visited Place Pins with Names & Badges
             val calculatedPositions = mutableListOf<Pair<VisitEntity, Offset>>()
             val paint = android.graphics.Paint().apply {
                 isAntiAlias = true
@@ -478,26 +452,17 @@ fun InteractiveRouteCanvas(
 
                 // Outer pulsing aura
                 drawCircle(
-                    color = pinColor.copy(alpha = if (isSelected) 0.45f else 0.25f),
+                    color = pinColor.copy(alpha = if (isSelected) 0.5f else 0.28f),
                     radius = pinRadius * 1.8f,
                     center = p
                 )
 
-                // White pin halo
-                drawCircle(
-                    color = Color.White,
-                    radius = pinRadius + 3.5f,
-                    center = p
-                )
+                // White ring
+                drawCircle(color = Color.White, radius = pinRadius + 3.5f, center = p)
+                // Pin fill
+                drawCircle(color = pinColor, radius = pinRadius, center = p)
 
-                // Pin circle background
-                drawCircle(
-                    color = pinColor,
-                    radius = pinRadius,
-                    center = p
-                )
-
-                // Number badge inside pin
+                // Pin number
                 paint.color = android.graphics.Color.WHITE
                 paint.textSize = 26f
                 paint.isFakeBoldText = true
@@ -508,7 +473,7 @@ fun InteractiveRouteCanvas(
                     paint
                 )
 
-                // Place name label banner below pin with dark pill background for readability on satellite images
+                // Place name label banner below pin
                 val shortName = if (visit.placeName.length > 20) {
                     visit.placeName.take(18) + "…"
                 } else visit.placeName
@@ -519,24 +484,21 @@ fun InteractiveRouteCanvas(
                 val bannerW = textW + 28f
                 val bannerTop = p.y + pinRadius + 10f
 
-                // Banner dark background
                 drawRoundRect(
-                    color = Color.Black.copy(alpha = 0.85f),
+                    color = Color.Black.copy(alpha = 0.88f),
                     topLeft = Offset(p.x - bannerW / 2f, bannerTop),
                     size = Size(bannerW, bannerH),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
                 )
                 drawRoundRect(
-                    color = pinColor.copy(alpha = 0.6f),
+                    color = pinColor.copy(alpha = 0.65f),
                     topLeft = Offset(p.x - bannerW / 2f, bannerTop),
                     size = Size(bannerW, bannerH),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f),
                     style = Stroke(width = 1.5f)
                 )
 
-                // Banner text
                 paint.color = android.graphics.Color.WHITE
-                paint.isFakeBoldText = true
                 drawContext.canvas.nativeCanvas.drawText(
                     shortName,
                     p.x,
@@ -560,26 +522,18 @@ fun InteractiveRouteCanvas(
                     viewportHeight = viewportH
                 )
 
-                // Accuracy circle / GPS pulsing wave
+                // Accuracy circle / GPS wave
                 drawCircle(
-                    color = Color(0xFF29B6F6).copy(alpha = 0.22f),
-                    radius = 36f * pulseScale,
+                    color = Color(0xFF29B6F6).copy(alpha = 0.25f),
+                    radius = 38f * pulseScale,
                     center = liveScreen
                 )
 
                 // White ring
-                drawCircle(
-                    color = Color.White,
-                    radius = 12f,
-                    center = liveScreen
-                )
+                drawCircle(color = Color.White, radius = 12f, center = liveScreen)
 
                 // Core Google Maps blue dot
-                drawCircle(
-                    color = Color(0xFF0288D1),
-                    radius = 9f,
-                    center = liveScreen
-                )
+                drawCircle(color = Color(0xFF0288D1), radius = 9f, center = liveScreen)
             }
         }
 
@@ -589,7 +543,7 @@ fun InteractiveRouteCanvas(
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = Color.Black.copy(alpha = 0.82f)
+                containerColor = Color.Black.copy(alpha = 0.84f)
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
             modifier = Modifier
@@ -608,15 +562,15 @@ fun InteractiveRouteCanvas(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "${mapLayer.label} View",
+                        text = mapLayer.label,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
                     Text(
-                        text = "Zoom ${(zoomLevel * 10).roundToInt() / 10f} • High-Res Aerial",
+                        text = "Real Satellite Imagery • Zoom ${(zoomLevel * 10).roundToInt() / 10f}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
+                        color = Color.White.copy(alpha = 0.75f),
                         fontSize = 11.sp
                     )
                 }
@@ -676,7 +630,7 @@ fun InteractiveRouteCanvas(
                 }
             }
 
-            // My Location Button (Jump directly to live GPS location)
+            // My Location Button (Jump directly to live GPS position)
             Surface(
                 shape = CircleShape,
                 tonalElevation = 6.dp,
@@ -749,7 +703,7 @@ fun InteractiveRouteCanvas(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
             ) {
                 IconButton(
-                    onClick = { zoomLevel = (zoomLevel + 1f).coerceAtMost(18.5f) },
+                    onClick = { zoomLevel = (zoomLevel + 1f).coerceAtMost(19.0f) },
                     modifier = Modifier
                         .size(46.dp)
                         .testTag("zoom_in_button")
@@ -791,7 +745,7 @@ fun InteractiveRouteCanvas(
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color.Black.copy(alpha = 0.85f)
+                    containerColor = Color.Black.copy(alpha = 0.88f)
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
                 modifier = Modifier

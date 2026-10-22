@@ -10,6 +10,7 @@ import com.example.domain.detector.VisitDetector
 import com.example.domain.geocoder.GeocodingService
 import com.example.domain.model.DailySummary
 import com.example.domain.model.TimelineItem
+import com.example.domain.model.TripRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -17,6 +18,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -80,6 +82,97 @@ class LocationRepository(
 
     fun getPointsForDateRange(startUtc: Long, endUtc: Long): Flow<List<LocationPointEntity>> =
         locationPointDao.getPointsForDateRange(startUtc, endUtc)
+
+    fun getAllTripTracksFlow(): Flow<List<TripRecord>> {
+        val pointsFlow = locationPointDao.getAllPointsFlow()
+        val visitsFlow = visitDao.getAllVisitsFlow()
+
+        return combine(pointsFlow, visitsFlow) { allPoints, allVisits ->
+            if (allPoints.isEmpty() && allVisits.isEmpty()) {
+                return@combine emptyList()
+            }
+
+            val dayStartMap = mutableMapOf<Long, MutableList<LocationPointEntity>>()
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+
+            for (p in allPoints) {
+                cal.timeInMillis = p.timestampUtc
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val dayStart = cal.timeInMillis
+                dayStartMap.getOrPut(dayStart) { mutableListOf() }.add(p)
+            }
+
+            val dayVisitsMap = mutableMapOf<Long, MutableList<VisitEntity>>()
+            for (v in allVisits) {
+                cal.timeInMillis = v.arrivalTimeUtc
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val dayStart = cal.timeInMillis
+                dayVisitsMap.getOrPut(dayStart) { mutableListOf() }.add(v)
+                if (!dayStartMap.containsKey(dayStart)) {
+                    dayStartMap[dayStart] = mutableListOf()
+                }
+            }
+
+            val dateFmt = SimpleDateFormat("EEEE, MMM d, yyyy", Locale.getDefault())
+            val tripList = mutableListOf<TripRecord>()
+
+            for ((dayStart, pts) in dayStartMap.entries) {
+                val dayVisits = dayVisitsMap[dayStart] ?: emptyList()
+                pts.sortBy { it.timestampUtc }
+
+                val totalDist = pts.sumOf { it.distanceFromLastMeters }
+                val startUtc = pts.firstOrNull()?.timestampUtc ?: dayVisits.firstOrNull()?.arrivalTimeUtc ?: dayStart
+                val endUtc = pts.lastOrNull()?.timestampUtc ?: dayVisits.lastOrNull()?.departureTimeUtc ?: (dayStart + 86400000L - 1000L)
+
+                val durationSec = if (pts.size >= 2) {
+                    max(60L, (endUtc - startUtc) / 1000L)
+                } else if (dayVisits.isNotEmpty()) {
+                    dayVisits.sumOf { it.durationSeconds }
+                } else {
+                    0L
+                }
+
+                val startName = dayVisits.firstOrNull()?.placeName
+                    ?: if (pts.isNotEmpty()) geocodingService.getFastSynchronousName(pts.first().latitude, pts.first().longitude, false)
+                    else "Recorded Departure"
+
+                val destName = dayVisits.lastOrNull()?.placeName
+                    ?: if (pts.isNotEmpty()) geocodingService.getFastSynchronousName(pts.last().latitude, pts.last().longitude, pts.last().speed > 0.8f)
+                    else "Recorded Stop"
+
+                val maxSpeed = (pts.maxOfOrNull { it.speed.toDouble() } ?: 0.0) * 3.6
+                val avgSpeed = if (durationSec > 0 && totalDist > 0) (totalDist / durationSec) * 3.6 else 0.0
+                val isOngoing = pts.lastOrNull()?.let { it.timestampUtc > System.currentTimeMillis() - 10 * 60 * 1000L } ?: false
+
+                tripList.add(
+                    TripRecord(
+                        id = "trip_$dayStart",
+                        dateLabel = dateFmt.format(Date(dayStart)),
+                        dateTimestampUtc = dayStart,
+                        startTimeUtc = startUtc,
+                        endTimeUtc = endUtc,
+                        totalDistanceMeters = totalDist,
+                        durationSeconds = durationSec,
+                        startPlaceName = startName,
+                        destinationPlaceName = destName,
+                        pointCount = pts.size,
+                        visitCount = dayVisits.size,
+                        maxSpeedKmh = maxSpeed,
+                        averageSpeedKmh = avgSpeed,
+                        isOngoing = isOngoing
+                    )
+                )
+            }
+
+            tripList.sortedByDescending { it.dateTimestampUtc }
+        }
+    }
 
     fun getVisitsForDate(startUtc: Long, endUtc: Long): Flow<List<VisitEntity>> =
         visitDao.getVisitsForDate(startUtc, endUtc)
