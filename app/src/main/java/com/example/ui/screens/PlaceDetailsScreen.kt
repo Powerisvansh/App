@@ -75,6 +75,7 @@ fun PlaceDetailsScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val visit by viewModel.getVisitById(visitId).collectAsState(initial = null)
     val daySummary by viewModel.selectedDaySummary.collectAsState()
+    val lastLocationInfo by viewModel.lastLocationInfo.collectAsState()
 
     var showEditDialog by remember { mutableStateOf(false) }
     var editNameText by remember { mutableStateOf("") }
@@ -217,11 +218,12 @@ fun PlaceDetailsScreen(
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(210.dp)
+                    .height(240.dp)
             ) {
                 InteractiveRouteCanvas(
                     points = emptyList(),
                     visits = listOf(v),
+                    currentLocation = lastLocationInfo,
                     modifier = Modifier.fillMaxSize()
                 )
             }

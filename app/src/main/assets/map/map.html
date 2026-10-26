@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="leaflet.css" />
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #121c24;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            background-color: #121c24;
+        }
+        /* Zoom control */
+        .leaflet-bar {
+            border: none !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+            border-radius: 12px !important;
+            overflow: hidden;
+        }
+        .leaflet-bar a {
+            background-color: rgba(30, 41, 59, 0.9) !important;
+            color: #ffffff !important;
+            border-bottom: 1px solid rgba(255,255,255,0.1) !important;
+            width: 38px !important;
+            height: 38px !important;
+            line-height: 38px !important;
+            font-size: 18px !important;
+        }
+        .leaflet-bar a:hover {
+            background-color: rgba(51, 65, 85, 0.95) !important;
+        }
+        /* Layer switcher */
+        .leaflet-control-layers {
+            border-radius: 12px !important;
+            background: rgba(30, 41, 59, 0.92) !important;
+            color: #ffffff !important;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.35) !important;
+            border: 1px solid rgba(255,255,255,0.12) !important;
+            padding: 8px 12px !important;
+        }
+        .leaflet-control-layers-toggle {
+            background-color: rgba(30, 41, 59, 0.92) !important;
+            border-radius: 12px !important;
+            width: 38px !important;
+            height: 38px !important;
+        }
+        .leaflet-control-layers-base label {
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            margin: 4px 0 !important;
+            cursor: pointer;
+        }
+        /* Scale control */
+        .leaflet-control-scale-line {
+            background: rgba(15, 23, 42, 0.8) !important;
+            color: #38bdf8 !important;
+            border-color: #38bdf8 !important;
+            font-size: 11px !important;
+            font-weight: bold !important;
+            border-radius: 4px;
+            padding: 2px 6px !important;
+        }
+        /* Popups */
+        .leaflet-popup-content-wrapper {
+            background: #1e293b !important;
+            color: #ffffff !important;
+            border-radius: 16px !important;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+            border: 1px solid rgba(56, 189, 248, 0.3) !important;
+            padding: 4px !important;
+        }
+        .leaflet-popup-tip {
+            background: #1e293b !important;
+        }
+        .popup-card {
+            padding: 8px 4px;
+        }
+        .popup-title {
+            font-size: 15px;
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 4px;
+        }
+        .popup-address {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+        .popup-time {
+            font-size: 11px;
+            color: #38bdf8;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .popup-btn {
+            background: #0284c7;
+            color: #ffffff;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            text-align: center;
+            display: block;
+            box-sizing: border-box;
+        }
+        .popup-btn:active {
+            opacity: 0.85;
+        }
+        /* Live GPS puck */
+        .user-location-marker {
+            position: relative;
+        }
+        .user-dot {
+            width: 16px;
+            height: 16px;
+            background: #0284c7;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 8px rgba(2, 132, 199, 0.8);
+            position: absolute;
+            top: -8px;
+            left: -8px;
+        }
+        .user-pulse {
+            width: 38px;
+            height: 38px;
+            background: rgba(56, 189, 248, 0.4);
+            border-radius: 50%;
+            position: absolute;
+            top: -19px;
+            left: -19px;
+            animation: pulse-ring 2s infinite ease-out;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.6); opacity: 1; }
+            80% { transform: scale(1.6); opacity: 0; }
+            100% { transform: scale(1.8); opacity: 0; }
+        }
+        /* Place pin */
+        .place-pin {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            background: #f97316;
+            border: 2px solid #ffffff;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            margin-top: -32px;
+            margin-left: -16px;
+        }
+        .place-pin.ongoing {
+            background: #10b981;
+        }
+        .place-pin span {
+            transform: rotate(45deg);
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        /* Route Start/End Endpoint Markers */
+        .route-endpoint-pin {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            color: #ffffff;
+            border: 2.5px solid #ffffff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            margin-top: -12px;
+            margin-left: -12px;
+        }
+        .route-endpoint-pin.start {
+            background: #10b981; /* Green A */
+        }
+        .route-endpoint-pin.end {
+            background: #ef4444; /* Red B */
+        }
+        /* Floating street route info badge */
+        #route-info-badge {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.94);
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 20px;
+            padding: 8px 16px;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 600;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+            z-index: 1000;
+            display: none;
+            pointer-events: auto;
+            text-align: center;
+            max-width: 85%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="route-info-badge">🛣️ Real Street Route: 0 km</div>
+
+    <script src="leaflet.js"></script>
+    <script>
+        // Real Map Tile Layers
+        // 1. Google Maps Hybrid (Real Satellite Photography + Streets, Roads & Highway labels)
+        const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '© Google Satellite'
+        });
+
+        // 2. Google Maps Pure Satellite
+        const googleSatellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '© Google Satellite'
+        });
+
+        // 3. Google Maps Standard Roadmap
+        const googleStreets = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '© Google Maps'
+        });
+
+        // 4. OpenStreetMap Standard
+        const openStreetMap = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        });
+
+        // Initialize Map with Google Hybrid as default real satellite map
+        const map = L.map('map', {
+            center: [28.6139, 77.2090],
+            zoom: 15,
+            layers: [googleHybrid],
+            zoomControl: false,
+            attributionControl: true
+        });
+
+        // Add Zoom Control at bottom right
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // Add Real Scale bar at bottom left
+        L.control.scale({ imperial: true, metric: true, position: 'bottomleft' }).addTo(map);
+
+        // Layer selection control
+        const baseMaps = {
+            "🛰️ Google Satellite": googleHybrid,
+            "🗺️ Google Streets": googleStreets,
+            "📷 Pure Satellite": googleSatellite,
+            "🌐 OpenStreetMap": openStreetMap
+        };
+        L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
+
+        // Map feature layers
+        let routeGlowPolyline = null;
+        let routeMainPolyline = null;
+        let routeEndpointsGroup = L.layerGroup().addTo(map);
+        let userLocationMarker = null;
+        let userAccuracyCircle = null;
+        let visitMarkersGroup = L.layerGroup().addTo(map);
+        let lastUserLatLng = null;
+
+        // Notify Android that map is ready
+        if (window.AndroidBridge && window.AndroidBridge.onMapReady) {
+            window.AndroidBridge.onMapReady();
+        }
+
+        // Layer Switcher
+        window.setLayerType = function(type) {
+            [googleHybrid, googleStreets, googleSatellite, openStreetMap].forEach(function(l) {
+                if (map.hasLayer(l)) map.removeLayer(l);
+            });
+            if (type === 'STREET') {
+                googleStreets.addTo(map);
+            } else if (type === 'SATELLITE') {
+                googleSatellite.addTo(map);
+            } else if (type === 'OSM') {
+                openStreetMap.addTo(map);
+            } else {
+                googleHybrid.addTo(map);
+            }
+        };
+
+        window.setCenter = function(lat, lng, zoom) {
+            map.setView([lat, lng], zoom || map.getZoom(), { animate: true });
+        };
+
+        window.flyToLocation = function(lat, lng, zoom) {
+            map.flyTo([lat, lng], zoom || 17, { duration: 1.2 });
+        };
+
+        window.updateUserLocation = function(lat, lng, accuracy) {
+            if (!lat || !lng) return;
+            const latlng = [lat, lng];
+            lastUserLatLng = latlng;
+
+            if (!userLocationMarker) {
+                const icon = L.divIcon({
+                    className: 'user-location-marker',
+                    html: '<div class="user-pulse"></div><div class="user-dot"></div>',
+                    iconSize: [0, 0]
+                });
+                userLocationMarker = L.marker(latlng, { icon: icon, zIndexOffset: 1000 }).addTo(map);
+            } else {
+                userLocationMarker.setLatLng(latlng);
+            }
+
+            if (accuracy && accuracy > 0) {
+                if (!userAccuracyCircle) {
+                    userAccuracyCircle = L.circle(latlng, {
+                        radius: accuracy,
+                        color: '#0284c7',
+                        weight: 1,
+                        opacity: 0.5,
+                        fillColor: '#38bdf8',
+                        fillOpacity: 0.15
+                    }).addTo(map);
+                } else {
+                    userAccuracyCircle.setLatLng(latlng);
+                    userAccuracyCircle.setRadius(accuracy);
+                }
+            }
+        };
+
+        // Render Real Street Route along real roads and avenues
+        window.setStreetRoute = function(coordsJson, distanceMeters, durationSeconds, summaryRoadName) {
+            try {
+                const coords = typeof coordsJson === 'string' ? JSON.parse(coordsJson) : coordsJson;
+                clearRouteLayers();
+
+                if (!coords || coords.length === 0) {
+                    hideRouteBadge();
+                    return;
+                }
+
+                const latlngs = coords.map(c => [c.latitude || c[0], c.longitude || c[1]]);
+
+                // High contrast dark outline halo for visibility over satellite and map
+                routeGlowPolyline = L.polyline(latlngs, {
+                    color: '#031326',
+                    weight: 8.5,
+                    opacity: 0.88,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                }).addTo(map);
+
+                // Vibrant Google Maps road blue/cyan driving polyline
+                routeMainPolyline = L.polyline(latlngs, {
+                    color: '#00e5ff',
+                    weight: 5,
+                    opacity: 0.98,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                }).addTo(map);
+
+                // Add Start (A) and End (B) endpoint markers
+                if (latlngs.length >= 2) {
+                    const startPt = latlngs[0];
+                    const endPt = latlngs[latlngs.length - 1];
+
+                    const startIcon = L.divIcon({
+                        className: '',
+                        html: '<div class="route-endpoint-pin start">A</div>',
+                        iconSize: [24, 24]
+                    });
+                    const endIcon = L.divIcon({
+                        className: '',
+                        html: '<div class="route-endpoint-pin end">B</div>',
+                        iconSize: [24, 24]
+                    });
+
+                    L.marker(startPt, { icon: startIcon }).addTo(routeEndpointsGroup);
+                    L.marker(endPt, { icon: endIcon }).addTo(routeEndpointsGroup);
+                }
+
+                // Show route distance and duration badge
+                showRouteBadge(distanceMeters, durationSeconds, summaryRoadName);
+
+            } catch (e) {
+                console.error("Failed to render street route:", e);
+            }
+        };
+
+        function showRouteBadge(distanceMeters, durationSeconds, summaryRoadName) {
+            const badge = document.getElementById('route-info-badge');
+            if (!badge) return;
+
+            let distStr = "";
+            if (distanceMeters && distanceMeters > 0) {
+                const km = (distanceMeters / 1000).toFixed(1);
+                distStr = `${km} km`;
+            }
+
+            let durStr = "";
+            if (durationSeconds && durationSeconds > 0) {
+                const mins = Math.round(durationSeconds / 60);
+                durStr = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins} min`;
+            }
+
+            const roadStr = summaryRoadName ? ` • via ${summaryRoadName}` : "";
+            const textParts = [distStr, durStr].filter(Boolean).join(" • ");
+            badge.textContent = `🛣️ Real Street Route: ${textParts || "Real Roads"}${roadStr}`;
+            badge.style.display = 'block';
+        }
+
+        function hideRouteBadge() {
+            const badge = document.getElementById('route-info-badge');
+            if (badge) badge.style.display = 'none';
+        }
+
+        function clearRouteLayers() {
+            if (routeGlowPolyline) { map.removeLayer(routeGlowPolyline); routeGlowPolyline = null; }
+            if (routeMainPolyline) { map.removeLayer(routeMainPolyline); routeMainPolyline = null; }
+            routeEndpointsGroup.clearLayers();
+        }
+
+        // Standard raw point drawing with auto street snapping fallback
+        window.setRoutePoints = function(pointsJson) {
+            try {
+                const points = typeof pointsJson === 'string' ? JSON.parse(pointsJson) : pointsJson;
+                if (!points || points.length === 0) {
+                    clearRouteLayers();
+                    hideRouteBadge();
+                    return;
+                }
+
+                // Draw initial polyline
+                const latlngs = points.map(p => [p.latitude, p.longitude]);
+                clearRouteLayers();
+
+                routeGlowPolyline = L.polyline(latlngs, {
+                    color: '#031326',
+                    weight: 8,
+                    opacity: 0.75,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                }).addTo(map);
+
+                routeMainPolyline = L.polyline(latlngs, {
+                    color: '#00e5ff',
+                    weight: 4.5,
+                    opacity: 0.95,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                }).addTo(map);
+
+            } catch (e) {
+                console.error("Failed to render route points:", e);
+            }
+        };
+
+        window.setVisitedPlaces = function(visitsJson) {
+            try {
+                const visits = typeof visitsJson === 'string' ? JSON.parse(visitsJson) : visitsJson;
+                visitMarkersGroup.clearLayers();
+
+                if (!visits || visits.length === 0) return;
+
+                visits.forEach((v, idx) => {
+                    const isOngoing = !v.departureTimeUtc;
+                    const pinHtml = `
+                        <div class="place-pin ${isOngoing ? 'ongoing' : ''}">
+                            <span>${idx + 1}</span>
+                        </div>
+                    `;
+
+                    const pinIcon = L.divIcon({
+                        className: 'custom-pin-container',
+                        html: pinHtml,
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 32],
+                        popupAnchor: [0, -32]
+                    });
+
+                    const marker = L.marker([v.latitude, v.longitude], { icon: pinIcon });
+
+                    const durMin = Math.round((v.durationSeconds || 0) / 60);
+                    const durStr = durMin >= 60 ? `${Math.floor(durMin/60)}h ${durMin%60}m` : `${durMin} min`;
+                    const arrivalStr = v.arrivalFormatted || '';
+                    const departureStr = v.departureFormatted || (isOngoing ? 'Ongoing' : '');
+
+                    const popupContent = `
+                        <div class="popup-card">
+                            <div class="popup-title">${v.placeName || 'Visited Place'}</div>
+                            <div class="popup-address">${v.address || ''}</div>
+                            <div class="popup-time">⏱️ ${arrivalStr} – ${departureStr} (${durStr})</div>
+                            <button class="popup-btn" style="margin-bottom: 6px;" onclick="onPinDetailsClicked(${v.id})">View Place Details</button>
+                            <button class="popup-btn" style="background: #059669;" onclick="onRouteToPlaceClicked(${v.latitude}, ${v.longitude}, ${v.id})">🛣️ Route on Real Roads</button>
+                        </div>
+                    `;
+
+                    marker.bindPopup(popupContent, { maxWidth: 260 });
+                    visitMarkersGroup.addLayer(marker);
+                });
+
+            } catch (e) {
+                console.error("Failed to render visits:", e);
+            }
+        };
+
+        window.onPinDetailsClicked = function(visitId) {
+            if (window.AndroidBridge && window.AndroidBridge.onVisitClicked) {
+                window.AndroidBridge.onVisitClicked(visitId);
+            }
+        };
+
+        window.onRouteToPlaceClicked = function(lat, lng, visitId) {
+            if (window.AndroidBridge && window.AndroidBridge.onRouteToPlace) {
+                window.AndroidBridge.onRouteToPlace(lat, lng, visitId);
+            }
+        };
+
+        window.fitAllBounds = function() {
+            const bounds = L.latLngBounds();
+            let hasPoints = false;
+
+            if (routeMainPolyline && routeMainPolyline.getLatLngs().length > 0) {
+                bounds.extend(routeMainPolyline.getBounds());
+                hasPoints = true;
+            }
+
+            visitMarkersGroup.eachLayer(layer => {
+                if (layer.getLatLng) {
+                    bounds.extend(layer.getLatLng());
+                    hasPoints = true;
+                }
+            });
+
+            if (userLocationMarker) {
+                bounds.extend(userLocationMarker.getLatLng());
+                hasPoints = true;
+            }
+
+            if (hasPoints && bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+            }
+        };
+    </script>
+</body>
+</html>

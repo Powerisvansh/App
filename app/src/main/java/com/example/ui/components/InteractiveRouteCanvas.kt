@@ -1,25 +1,26 @@
 package com.example.ui.components
 
-import android.graphics.Bitmap
+import android.annotation.SuppressLint
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.view.MotionEvent
+import android.view.View
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,67 +34,97 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.local.entity.LocationPointEntity
 import com.example.data.local.entity.VisitEntity
 import com.example.data.preferences.LastLocationInfo
+import com.example.domain.routing.RoadCoordinate
+import com.example.domain.routing.RoadRouteResult
+import com.example.domain.routing.RoadRoutingService
 import com.example.ui.map.MapLayerType
-import com.example.ui.map.MapProjection
-import com.example.ui.map.MapTileManager
-import com.example.ui.map.TileCoord
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.hypot
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
+/**
+ * JavaScript interface bridge between Leaflet real Google Maps and Android Kotlin.
+ */
+class RealMapJsBridge(
+    private val onMapLoaded: () -> Unit,
+    private val onVisitClick: (Long) -> Unit,
+    private val onRouteToPlaceRequest: (Double, Double, Long) -> Unit
+) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun onMapReady() {
+        mainHandler.post {
+            onMapLoaded()
+        }
+    }
+
+    @JavascriptInterface
+    fun onVisitClicked(visitId: Long) {
+        mainHandler.post {
+            onVisitClick(visitId)
+        }
+    }
+
+    @JavascriptInterface
+    fun onRouteToPlace(lat: Double, lng: Double, visitId: Long) {
+        mainHandler.post {
+            onRouteToPlaceRequest(lat, lng, visitId)
+        }
+    }
+}
+
+/**
+ * Real interactive map view powered by Leaflet and Google Maps Satellite/Hybrid tiles,
+ * complete with pinch-to-zoom, momentum panning, live pulsing GPS dot, and routes snapped
+ * to real streets and roads.
+ */
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun InteractiveRouteCanvas(
     points: List<LocationPointEntity>,
@@ -103,807 +134,551 @@ fun InteractiveRouteCanvas(
     onVisitSelected: (VisitEntity) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val tileManager = remember { MapTileManager(context) }
+    val coroutineScope = rememberCoroutineScope()
 
-    // Map state: center (lat, lon), zoom (Float), and layer
-    var centerLat by remember { mutableStateOf(28.6139) }
-    var centerLon by remember { mutableStateOf(77.2090) }
-    var zoomLevel by remember { mutableFloatStateOf(15.0f) }
-    var mapLayer by remember { mutableStateOf(MapLayerType.HYBRID) } // Real Google Maps Satellite with roads & labels
-    var showLayerMenu by remember { mutableStateOf(false) }
-
+    var isMapLoaded by remember { mutableStateOf(false) }
     var selectedVisit by remember { mutableStateOf<VisitEntity?>(null) }
-    var hasAutoCentered by remember { mutableStateOf(false) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var currentLayer by remember { mutableStateOf(MapLayerType.HYBRID) }
+    var showLayerMenu by remember { mutableStateOf(false) }
+    var hasInitialFitted by remember { mutableStateOf(false) }
 
-    // Memory tile cache map that triggers Compose snapshot redraws when new tiles load
-    val loadedTiles = remember { mutableStateMapOf<String, Bitmap>() }
+    // Real street road snapping state
+    var snapToRealRoads by remember { mutableStateOf(true) }
+    var isCalculatingRoute by remember { mutableStateOf(false) }
+    var activeRoadRoute by remember { mutableStateOf<RoadRouteResult?>(null) }
 
-    // Pulsing transition for live user GPS beacon
-    val infiniteTransition = rememberInfiniteTransition(label = "gps_beacon")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.35f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_scale"
-    )
+    fun evaluateJs(script: String) {
+        webViewRef?.post {
+            webViewRef?.evaluateJavascript(script, null)
+        }
+    }
 
-    // Center on route or user's live position
-    LaunchedEffect(points, visits, currentLocation) {
-        if (!hasAutoCentered) {
-            val allLats = points.map { it.latitude } + visits.map { it.latitude }
-            val allLons = points.map { it.longitude } + visits.map { it.longitude }
+    // Push real street route to Leaflet
+    fun pushStreetRouteToMap(result: RoadRouteResult) {
+        val jsonArray = JSONArray()
+        for (c in result.coordinates) {
+            val obj = JSONObject()
+            obj.put("latitude", c.latitude)
+            obj.put("longitude", c.longitude)
+            jsonArray.put(obj)
+        }
+        val safeSummary = result.summaryRoadName.replace("'", "\\'")
+        evaluateJs("window.setStreetRoute(${jsonArray}, ${result.totalDistanceMeters}, ${result.durationSeconds}, '${safeSummary}');")
+    }
 
-            if (allLats.isNotEmpty()) {
-                val (newCenter, optimalZoom) = MapProjection.calculateFitBounds(
-                    lats = allLats,
-                    lons = allLons,
-                    viewportWidth = 800f,
-                    viewportHeight = 1000f,
-                    paddingPx = 140f
+    // Calculate and apply real street route when points/visits change
+    LaunchedEffect(isMapLoaded, points, visits, snapToRealRoads) {
+        if (!isMapLoaded) return@LaunchedEffect
+
+        if (!snapToRealRoads) {
+            // User disabled real road snapping: fallback to direct points
+            val jsonArray = JSONArray()
+            for (p in points) {
+                val obj = JSONObject()
+                obj.put("latitude", p.latitude)
+                obj.put("longitude", p.longitude)
+                jsonArray.put(obj)
+            }
+            evaluateJs("window.setRoutePoints(${jsonArray});")
+            activeRoadRoute = null
+            return@LaunchedEffect
+        }
+
+        // Determine waypoints for street road routing
+        val waypoints = when {
+            points.size >= 2 -> {
+                points.map { RoadCoordinate(it.latitude, it.longitude) }
+            }
+            visits.size >= 2 -> {
+                visits.sortedBy { it.arrivalTimeUtc }.map { RoadCoordinate(it.latitude, it.longitude) }
+            }
+            currentLocation != null && visits.isNotEmpty() -> {
+                val targetVisit = visits.first()
+                listOf(
+                    RoadCoordinate(currentLocation.latitude, currentLocation.longitude),
+                    RoadCoordinate(targetVisit.latitude, targetVisit.longitude)
                 )
-                centerLat = newCenter.first
-                centerLon = newCenter.second
-                zoomLevel = optimalZoom
-                hasAutoCentered = true
-            } else if (currentLocation != null && currentLocation.latitude != 0.0 && currentLocation.longitude != 0.0) {
-                centerLat = currentLocation.latitude
-                centerLon = currentLocation.longitude
-                zoomLevel = 16.5f
-                hasAutoCentered = true
+            }
+            else -> emptyList()
+        }
+
+        if (waypoints.size >= 2) {
+            isCalculatingRoute = true
+            val result = RoadRoutingService.getStreetRoute(waypoints)
+            activeRoadRoute = result
+            isCalculatingRoute = false
+            pushStreetRouteToMap(result)
+        } else {
+            // Fewer than 2 points: clear route
+            evaluateJs("window.setRoutePoints('[]');")
+            activeRoadRoute = null
+        }
+    }
+
+    // Sync visited place markers to Leaflet whenever visits change
+    LaunchedEffect(isMapLoaded, visits) {
+        if (isMapLoaded) {
+            val timeFmt = SimpleDateFormat("h:mm a", Locale.getDefault())
+            val jsonArray = JSONArray()
+            for (v in visits) {
+                val obj = JSONObject()
+                obj.put("id", v.id)
+                obj.put("placeName", v.placeName)
+                obj.put("address", v.address)
+                obj.put("latitude", v.latitude)
+                obj.put("longitude", v.longitude)
+                obj.put("arrivalTimeUtc", v.arrivalTimeUtc)
+                obj.put("arrivalFormatted", timeFmt.format(Date(v.arrivalTimeUtc)))
+                if (v.departureTimeUtc != null) {
+                    obj.put("departureTimeUtc", v.departureTimeUtc)
+                    obj.put("departureFormatted", timeFmt.format(Date(v.departureTimeUtc)))
+                } else {
+                    obj.put("departureTimeUtc", JSONObject.NULL)
+                    obj.put("departureFormatted", "Ongoing")
+                }
+                obj.put("durationSeconds", v.durationSeconds)
+                jsonArray.put(obj)
+            }
+            evaluateJs("window.setVisitedPlaces(${jsonArray});")
+        }
+    }
+
+    // Sync live user location puck whenever location updates
+    LaunchedEffect(isMapLoaded, currentLocation) {
+        if (isMapLoaded && currentLocation != null) {
+            val acc = currentLocation.accuracy ?: 0f
+            evaluateJs("window.updateUserLocation(${currentLocation.latitude}, ${currentLocation.longitude}, $acc);")
+        }
+    }
+
+    // Auto-fit to route/visits on initial load
+    LaunchedEffect(isMapLoaded, points.size, visits.size) {
+        if (isMapLoaded && !hasInitialFitted) {
+            if (points.isNotEmpty() || visits.isNotEmpty()) {
+                evaluateJs("window.fitAllBounds();")
+                hasInitialFitted = true
+            } else if (currentLocation != null) {
+                evaluateJs("window.flyToLocation(${currentLocation.latitude}, ${currentLocation.longitude}, 16);")
+                hasInitialFitted = true
             }
         }
     }
 
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("interactive_route_canvas")
-    ) {
-        val viewportW = constraints.maxWidth.toFloat().coerceAtLeast(100f)
-        val viewportH = constraints.maxHeight.toFloat().coerceAtLeast(100f)
+    // Function to calculate road route to a specific destination
+    fun routeToDestination(destLat: Double, destLng: Double) {
+        coroutineScope.launch {
+            val origin = if (currentLocation != null) {
+                RoadCoordinate(currentLocation.latitude, currentLocation.longitude)
+            } else if (points.isNotEmpty()) {
+                RoadCoordinate(points.last().latitude, points.last().longitude)
+            } else if (visits.isNotEmpty()) {
+                RoadCoordinate(visits.first().latitude, visits.first().longitude)
+            } else null
 
-        // Compute visible tile coordinates for current viewport & zoom
-        val baseZoom = zoomLevel.toInt().coerceIn(1, 19)
-        val subScale = Math.pow(2.0, (zoomLevel - baseZoom).toDouble()).toFloat()
-        val tileSizeOnScreen = (MapProjection.TILE_SIZE * subScale).toFloat()
-
-        val visibleTiles = remember(centerLat, centerLon, zoomLevel, viewportW, viewportH) {
-            val maxTiles = (1 shl baseZoom) - 1
-            val topLeftCoord = MapProjection.screenToLatLon(
-                screenOffset = Offset(-tileSizeOnScreen, -tileSizeOnScreen),
-                centerLat = centerLat,
-                centerLon = centerLon,
-                zoom = zoomLevel,
-                viewportWidth = viewportW,
-                viewportHeight = viewportH
-            )
-            val bottomRightCoord = MapProjection.screenToLatLon(
-                screenOffset = Offset(viewportW + tileSizeOnScreen, viewportH + tileSizeOnScreen),
-                centerLat = centerLat,
-                centerLon = centerLon,
-                zoom = zoomLevel,
-                viewportWidth = viewportW,
-                viewportHeight = viewportH
-            )
-
-            val minTileX = ((topLeftCoord.second + 180.0) / 360.0 * (1 shl baseZoom)).toInt().coerceIn(0, maxTiles)
-            val maxTileX = ((bottomRightCoord.second + 180.0) / 360.0 * (1 shl baseZoom)).toInt().coerceIn(0, maxTiles)
-
-            val topPxY = MapProjection.latToWorldPixelY(topLeftCoord.first, baseZoom)
-            val bottomPxY = MapProjection.latToWorldPixelY(bottomRightCoord.first, baseZoom)
-            val minTileY = (topPxY / MapProjection.TILE_SIZE).toInt().coerceIn(0, maxTiles)
-            val maxTileY = (bottomPxY / MapProjection.TILE_SIZE).toInt().coerceIn(0, maxTiles)
-
-            val tiles = mutableListOf<TileCoord>()
-            for (ty in min(minTileY, maxTileY)..max(minTileY, maxTileY)) {
-                for (tx in min(minTileX, maxTileX)..max(minTileX, maxTileX)) {
-                    tiles.add(TileCoord(baseZoom, tx, ty))
-                }
+            if (origin != null) {
+                isCalculatingRoute = true
+                val result = RoadRoutingService.getRouteBetween(
+                    origin.latitude,
+                    origin.longitude,
+                    destLat,
+                    destLng
+                )
+                activeRoadRoute = result
+                isCalculatingRoute = false
+                pushStreetRouteToMap(result)
+                evaluateJs("window.fitAllBounds();")
             }
-            tiles
         }
+    }
 
-        // Active Tile Pre-fetcher in Composable coroutine
-        LaunchedEffect(visibleTiles, mapLayer) {
-            for (tile in visibleTiles) {
-                val key = "${mapLayer.name}_${tile.z}_${tile.x}_${tile.y}"
-                if (!loadedTiles.containsKey(key)) {
-                    val cached = tileManager.getCachedTile(tile, mapLayer)
-                    if (cached != null) {
-                        loadedTiles[key] = cached
-                    } else {
-                        tileManager.requestTile(tile, mapLayer) { loadedCoord, loadedBmp ->
-                            val k = "${mapLayer.name}_${loadedCoord.z}_${loadedCoord.x}_${loadedCoord.y}"
-                            loadedTiles[k] = loadedBmp
+    Box(
+        modifier = modifier
+            .background(Color(0xFF121C24))
+            .testTag("interactive_real_map_container")
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setBackgroundColor(0xFF121C24.toInt())
+                    setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        allowFileAccess = true
+                        cacheMode = WebSettings.LOAD_DEFAULT
+                        loadsImagesAutomatically = true
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
+                        displayZoomControls = false
+                        builtInZoomControls = false
+                    }
+
+                    // Prevent parent Compose scrollables from stealing gestures
+                    setOnTouchListener { v, event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                                v.parent?.requestDisallowInterceptTouchEvent(true)
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                v.parent?.requestDisallowInterceptTouchEvent(false)
+                            }
+                        }
+                        false
+                    }
+
+                    val bridge = RealMapJsBridge(
+                        onMapLoaded = {
+                            isMapLoaded = true
+                        },
+                        onVisitClick = { visitId ->
+                            val clickedVisit = visits.find { it.id == visitId }
+                            if (clickedVisit != null) {
+                                selectedVisit = clickedVisit
+                            }
+                        },
+                        onRouteToPlaceRequest = { lat, lng, _ ->
+                            routeToDestination(lat, lng)
+                        }
+                    )
+                    addJavascriptInterface(bridge, "AndroidBridge")
+
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            isMapLoaded = true
+                        }
+                    }
+
+                    webChromeClient = WebChromeClient()
+
+                    loadUrl("file:///android_asset/map/map.html")
+                    webViewRef = this
+                }
+            },
+            update = { wv ->
+                webViewRef = wv
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Top Controls: Layer Selector & Real Road Mode Toggle
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 14.dp, top = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Layer Selection Dropdown
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = Color(0xFF1E293B).copy(alpha = 0.94f),
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f))
+            ) {
+                Box {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(Color(0xFF10B981), CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = when (currentLayer) {
+                                MapLayerType.HYBRID -> "🛰️ Satellite"
+                                MapLayerType.SATELLITE -> "📷 Pure Aerial"
+                                MapLayerType.STREET -> "🗺️ Streets"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { showLayerMenu = true },
+                            modifier = Modifier
+                                .size(26.dp)
+                                .testTag("map_layer_selector_button")
+                        ) {
+                            Icon(
+                                Icons.Default.Layers,
+                                contentDescription = "Switch Map Layer",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = showLayerMenu,
+                        onDismissRequest = { showLayerMenu = false },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                    ) {
+                        MapLayerType.values().forEach { layer ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(layer.label, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                layer.iconDescription,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (currentLayer == layer) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    currentLayer = layer
+                                    showLayerMenu = false
+                                    evaluateJs("window.setLayerType('${layer.name}');")
+                                }
+                            )
                         }
                     }
                 }
             }
-        }
 
-        var visitScreenPositions by remember { mutableStateOf<List<Pair<VisitEntity, Offset>>>(emptyList()) }
-
-        // Gestures: Drag to pan, Pinch to zoom
-        val gestureModifier = Modifier.pointerInput(centerLat, centerLon, zoomLevel) {
-            detectTransformGestures { _, pan, zoomChange, _ ->
-                if (zoomChange != 1.0f) {
-                    zoomLevel = (zoomLevel * zoomChange).coerceIn(2.5f, 19.0f)
-                }
-                if (pan != Offset.Zero) {
-                    val (newLat, newLon) = MapProjection.screenToLatLon(
-                        screenOffset = Offset(viewportW / 2f - pan.x, viewportH / 2f - pan.y),
-                        centerLat = centerLat,
-                        centerLon = centerLon,
-                        zoom = zoomLevel,
-                        viewportWidth = viewportW,
-                        viewportHeight = viewportH
-                    )
-                    centerLat = newLat
-                    centerLon = newLon
-                }
-            }
-        }
-
-        // Tap gestures: select visit pins & double-tap to zoom in
-        val tapModifier = Modifier.pointerInput(centerLat, centerLon, zoomLevel, visitScreenPositions) {
-            detectTapGestures(
-                onDoubleTap = { tapOffset ->
-                    val (tapLat, tapLon) = MapProjection.screenToLatLon(
-                        screenOffset = tapOffset,
-                        centerLat = centerLat,
-                        centerLon = centerLon,
-                        zoom = zoomLevel,
-                        viewportWidth = viewportW,
-                        viewportHeight = viewportH
-                    )
-                    centerLat = tapLat
-                    centerLon = tapLon
-                    zoomLevel = (zoomLevel + 1.2f).coerceAtMost(19.0f)
-                },
-                onTap = { tapOffset ->
-                    val hit = visitScreenPositions.find { (_, pinOffset) ->
-                        hypot((tapOffset.x - pinOffset.x).toDouble(), (tapOffset.y - pinOffset.y).toDouble()) <= 45.0
-                    }
-                    if (hit != null) {
-                        selectedVisit = hit.first
-                        onVisitSelected(hit.first)
-                    } else {
-                        selectedVisit = null
-                    }
-                }
-            )
-        }
-
-        // Canvas: Draws real Google satellite tiles, glowing routes, and GPS pins
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(gestureModifier)
-                .then(tapModifier)
-        ) {
-            // 1. Draw realistic satellite aerial terrain background
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = when (mapLayer) {
-                        MapLayerType.HYBRID, MapLayerType.SATELLITE -> listOf(
-                            Color(0xFF0D1B22),
-                            Color(0xFF11252F),
-                            Color(0xFF162D38)
-                        )
-                        MapLayerType.STREET -> listOf(
-                            Color(0xFFF1F3F4),
-                            Color(0xFFE8EAED)
-                        )
-                    }
+            // Real Streets Roads Toggle Chip
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = if (snapToRealRoads) Color(0xFF0F766E).copy(alpha = 0.94f) else Color(0xFF334155).copy(alpha = 0.94f),
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (snapToRealRoads) Color(0xFF2DD4BF) else Color.Gray.copy(alpha = 0.4f)
                 ),
-                size = Size(viewportW, viewportH)
-            )
-
-            // 2. Draw Google Maps Satellite / Hybrid tiles
-            for (tile in visibleTiles) {
-                val tileKey = "${mapLayer.name}_${tile.z}_${tile.x}_${tile.y}"
-
-                val nwLat = MapProjection.worldPixelYToLat(tile.y * MapProjection.TILE_SIZE, tile.z)
-                val nwLon = MapProjection.worldPixelXToLon(tile.x * MapProjection.TILE_SIZE, tile.z)
-                val screenNW = MapProjection.latLonToScreen(
-                    lat = nwLat,
-                    lon = nwLon,
-                    centerLat = centerLat,
-                    centerLon = centerLon,
-                    zoom = zoomLevel,
-                    viewportWidth = viewportW,
-                    viewportHeight = viewportH
-                )
-
-                val bitmap = loadedTiles[tileKey] ?: tileManager.getCachedTile(tile, mapLayer)
-                if (bitmap != null && !bitmap.isRecycled) {
-                    if (!loadedTiles.containsKey(tileKey)) {
-                        loadedTiles[tileKey] = bitmap
-                    }
-                    drawImage(
-                        image = bitmap.asImageBitmap(),
-                        dstOffset = IntOffset(screenNW.x.roundToInt(), screenNW.y.roundToInt()),
-                        dstSize = IntSize((tileSizeOnScreen + 1f).roundToInt(), (tileSizeOnScreen + 1f).roundToInt())
-                    )
-                } else {
-                    // Realistic terrain placeholder while downloading
-                    drawRect(
-                        color = if (mapLayer == MapLayerType.STREET) Color(0xFFE4E9EC) else Color(0xFF132835),
-                        topLeft = screenNW,
-                        size = Size(tileSizeOnScreen, tileSizeOnScreen)
-                    )
-                    drawRect(
-                        color = Color.White.copy(alpha = 0.04f),
-                        topLeft = screenNW,
-                        size = Size(tileSizeOnScreen, tileSizeOnScreen),
-                        style = Stroke(width = 1f)
-                    )
-                }
-            }
-
-            // 3. Draw Travel Route Polyline with Vibrant Glowing Halo
-            if (points.size >= 2) {
-                val routePath = Path()
-                val firstScr = MapProjection.latLonToScreen(
-                    lat = points.first().latitude,
-                    lon = points.first().longitude,
-                    centerLat = centerLat,
-                    centerLon = centerLon,
-                    zoom = zoomLevel,
-                    viewportWidth = viewportW,
-                    viewportHeight = viewportH
-                )
-                routePath.moveTo(firstScr.x, firstScr.y)
-
-                for (i in 1 until points.size) {
-                    val p = points[i]
-                    val scr = MapProjection.latLonToScreen(
-                        lat = p.latitude,
-                        lon = p.longitude,
-                        centerLat = centerLat,
-                        centerLon = centerLon,
-                        zoom = zoomLevel,
-                        viewportWidth = viewportW,
-                        viewportHeight = viewportH
-                    )
-                    routePath.lineTo(scr.x, scr.y)
-                }
-
-                // Dark outer outline for maximum contrast over bright satellite fields and dark water
-                drawPath(
-                    path = routePath,
-                    color = Color.Black.copy(alpha = 0.75f),
-                    style = Stroke(
-                        width = 13f,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
-
-                // Vibrant Google Maps Electric Blue glow
-                drawPath(
-                    path = routePath,
-                    color = Color(0xFF00E5FF).copy(alpha = 0.55f),
-                    style = Stroke(
-                        width = 9f,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
-
-                // Core crisp polyline
-                drawPath(
-                    path = routePath,
-                    color = Color(0xFF00E5FF),
-                    style = Stroke(
-                        width = 5f,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round
-                    )
-                )
-
-                // Breadcrumb dots
-                for (pt in points) {
-                    val p = MapProjection.latLonToScreen(
-                        lat = pt.latitude,
-                        lon = pt.longitude,
-                        centerLat = centerLat,
-                        centerLon = centerLon,
-                        zoom = zoomLevel,
-                        viewportWidth = viewportW,
-                        viewportHeight = viewportH
-                    )
-                    drawCircle(color = Color.Black.copy(alpha = 0.6f), radius = 4f, center = p)
-                    drawCircle(color = Color.White, radius = 2.5f, center = p)
-                }
-            }
-
-            // 4. Draw Visited Place Pins with Names & Badges
-            val calculatedPositions = mutableListOf<Pair<VisitEntity, Offset>>()
-            val paint = android.graphics.Paint().apply {
-                isAntiAlias = true
-                textAlign = android.graphics.Paint.Align.CENTER
-            }
-
-            visits.forEachIndexed { index, visit ->
-                val p = MapProjection.latLonToScreen(
-                    lat = visit.latitude,
-                    lon = visit.longitude,
-                    centerLat = centerLat,
-                    centerLon = centerLon,
-                    zoom = zoomLevel,
-                    viewportWidth = viewportW,
-                    viewportHeight = viewportH
-                )
-                calculatedPositions.add(Pair(visit, p))
-
-                val isOngoing = visit.departureTimeUtc == null
-                val isSelected = selectedVisit?.id == visit.id
-
-                val pinColor = when {
-                    isSelected -> Color(0xFFFF5722)
-                    isOngoing -> Color(0xFF00E676)
-                    else -> Color(0xFFFF9100)
-                }
-                val pinRadius = if (isSelected) 22f else 18f
-
-                // Outer pulsing aura
-                drawCircle(
-                    color = pinColor.copy(alpha = if (isSelected) 0.5f else 0.28f),
-                    radius = pinRadius * 1.8f,
-                    center = p
-                )
-
-                // White ring
-                drawCircle(color = Color.White, radius = pinRadius + 3.5f, center = p)
-                // Pin fill
-                drawCircle(color = pinColor, radius = pinRadius, center = p)
-
-                // Pin number
-                paint.color = android.graphics.Color.WHITE
-                paint.textSize = 26f
-                paint.isFakeBoldText = true
-                drawContext.canvas.nativeCanvas.drawText(
-                    "${index + 1}",
-                    p.x,
-                    p.y + 9f,
-                    paint
-                )
-
-                // Place name label banner below pin
-                val shortName = if (visit.placeName.length > 20) {
-                    visit.placeName.take(18) + "…"
-                } else visit.placeName
-
-                paint.textSize = 24f
-                val textW = paint.measureText(shortName)
-                val bannerH = 34f
-                val bannerW = textW + 28f
-                val bannerTop = p.y + pinRadius + 10f
-
-                drawRoundRect(
-                    color = Color.Black.copy(alpha = 0.88f),
-                    topLeft = Offset(p.x - bannerW / 2f, bannerTop),
-                    size = Size(bannerW, bannerH),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f)
-                )
-                drawRoundRect(
-                    color = pinColor.copy(alpha = 0.65f),
-                    topLeft = Offset(p.x - bannerW / 2f, bannerTop),
-                    size = Size(bannerW, bannerH),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f),
-                    style = Stroke(width = 1.5f)
-                )
-
-                paint.color = android.graphics.Color.WHITE
-                drawContext.canvas.nativeCanvas.drawText(
-                    shortName,
-                    p.x,
-                    bannerTop + 24f,
-                    paint
-                )
-            }
-            visitScreenPositions = calculatedPositions
-
-            // 5. Draw Live User Location Blue GPS Dot (Google Maps style)
-            val liveLat = currentLocation?.latitude ?: points.lastOrNull()?.latitude
-            val liveLon = currentLocation?.longitude ?: points.lastOrNull()?.longitude
-            if (liveLat != null && liveLon != null && liveLat != 0.0 && liveLon != 0.0) {
-                val liveScreen = MapProjection.latLonToScreen(
-                    lat = liveLat,
-                    lon = liveLon,
-                    centerLat = centerLat,
-                    centerLon = centerLon,
-                    zoom = zoomLevel,
-                    viewportWidth = viewportW,
-                    viewportHeight = viewportH
-                )
-
-                // Accuracy circle / GPS wave
-                drawCircle(
-                    color = Color(0xFF29B6F6).copy(alpha = 0.25f),
-                    radius = 38f * pulseScale,
-                    center = liveScreen
-                )
-
-                // White ring
-                drawCircle(color = Color.White, radius = 12f, center = liveScreen)
-
-                // Core Google Maps blue dot
-                drawCircle(color = Color(0xFF0288D1), radius = 9f, center = liveScreen)
-            }
-        }
-
-        // =========================================================================
-        // Floating Top-Left Layer Indicator & HUD Info Chip
-        // =========================================================================
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.Black.copy(alpha = 0.84f)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(14.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                modifier = Modifier
+                    .clickable { snapToRealRoads = !snapToRealRoads }
+                    .testTag("toggle_real_roads_button")
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .background(Color(0xFF00E5FF), CircleShape)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isCalculatingRoute) {
+                        CircularProgressIndicator(
+                            color = Color(0xFF2DD4BF),
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.DirectionsCar,
+                            contentDescription = null,
+                            tint = if (snapToRealRoads) Color(0xFF2DD4BF) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = mapLayer.label,
+                        text = if (snapToRealRoads) "🛣️ Real Roads: ON" else "📍 Direct GPS",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
-                    Text(
-                        text = "Real Satellite Imagery • Zoom ${(zoomLevel * 10).roundToInt() / 10f}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.75f),
-                        fontSize = 11.sp
-                    )
                 }
             }
         }
 
-        // =========================================================================
-        // Floating Map Controls: Layers, My Location, Fit Route, Zoom In, Zoom Out
-        // =========================================================================
+        // Floating Action Buttons on the Right (My Location, Fit Route)
         Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(14.dp),
+                .padding(end = 14.dp, top = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Layer Switcher Button
-            Box {
-                Surface(
-                    shape = CircleShape,
-                    tonalElevation = 6.dp,
-                    shadowElevation = 6.dp,
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-                ) {
-                    IconButton(
-                        onClick = { showLayerMenu = true },
-                        modifier = Modifier
-                            .size(46.dp)
-                            .testTag("map_layers_button")
-                    ) {
-                        Icon(
-                            Icons.Default.Layers,
-                            contentDescription = "Map Layers",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
-                DropdownMenu(
-                    expanded = showLayerMenu,
-                    onDismissRequest = { showLayerMenu = false }
-                ) {
-                    MapLayerType.values().forEach { layer ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = layer.label,
-                                    fontWeight = if (mapLayer == layer) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (mapLayer == layer) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            },
-                            onClick = {
-                                mapLayer = layer
-                                showLayerMenu = false
-                            }
-                        )
-                    }
-                }
-            }
-
-            // My Location Button (Jump directly to live GPS position)
-            Surface(
-                shape = CircleShape,
-                tonalElevation = 6.dp,
-                shadowElevation = 6.dp,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-            ) {
-                IconButton(
-                    onClick = {
-                        val lat = currentLocation?.latitude ?: points.lastOrNull()?.latitude
-                        val lon = currentLocation?.longitude ?: points.lastOrNull()?.longitude
-                        if (lat != null && lon != null && lat != 0.0 && lon != 0.0) {
-                            centerLat = lat
-                            centerLon = lon
-                            zoomLevel = 17f
-                        }
-                    },
-                    modifier = Modifier
-                        .size(46.dp)
-                        .testTag("my_location_button")
-                ) {
-                    Icon(
-                        Icons.Default.MyLocation,
-                        contentDescription = "Center on My Location",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            // Fit Route Button (Zoom to encompass all tracked points)
-            Surface(
-                shape = CircleShape,
-                tonalElevation = 6.dp,
-                shadowElevation = 6.dp,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-            ) {
-                IconButton(
-                    onClick = {
-                        val allLats = points.map { it.latitude } + visits.map { it.latitude }
-                        val allLons = points.map { it.longitude } + visits.map { it.longitude }
-                        if (allLats.isNotEmpty()) {
-                            val (newCenter, optimalZoom) = MapProjection.calculateFitBounds(
-                                lats = allLats,
-                                lons = allLons,
-                                viewportWidth = viewportW,
-                                viewportHeight = viewportH,
-                                paddingPx = 140f
-                            )
-                            centerLat = newCenter.first
-                            centerLon = newCenter.second
-                            zoomLevel = optimalZoom
-                        }
-                    },
-                    modifier = Modifier
-                        .size(46.dp)
-                        .testTag("recenter_button")
-                ) {
-                    Icon(
-                        Icons.Default.CenterFocusStrong,
-                        contentDescription = "Fit Route",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            // Zoom In (+)
-            Surface(
-                shape = CircleShape,
-                tonalElevation = 6.dp,
-                shadowElevation = 6.dp,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-            ) {
-                IconButton(
-                    onClick = { zoomLevel = (zoomLevel + 1f).coerceAtMost(19.0f) },
-                    modifier = Modifier
-                        .size(46.dp)
-                        .testTag("zoom_in_button")
-                ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "Zoom In",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            // Zoom Out (-)
-            Surface(
-                shape = CircleShape,
-                tonalElevation = 6.dp,
-                shadowElevation = 6.dp,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-            ) {
-                IconButton(
-                    onClick = { zoomLevel = (zoomLevel - 1f).coerceAtLeast(2.5f) },
-                    modifier = Modifier
-                        .size(46.dp)
-                        .testTag("zoom_out_button")
-                ) {
-                    Icon(
-                        Icons.Default.Remove,
-                        contentDescription = "Zoom Out",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
-
-        // =========================================================================
-        // Live Road / Location Banner at Bottom-Start
-        // =========================================================================
-        if (currentLocation != null && (currentLocation.placeName.isNotBlank() || currentLocation.roadName.isNotBlank())) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.Black.copy(alpha = 0.88f)
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            // Fit All / Recenter Button
+            FloatingActionButton(
+                onClick = {
+                    evaluateJs("window.fitAllBounds();")
+                },
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 14.dp, bottom = if (selectedVisit != null) 170.dp else 16.dp)
-                    .fillMaxWidth(0.72f)
+                    .size(44.dp)
+                    .testTag("map_fit_bounds_button"),
+                shape = CircleShape,
+                containerColor = Color(0xFF1E293B).copy(alpha = 0.92f),
+                contentColor = Color(0xFF38BDF8),
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Default.Route,
-                        contentDescription = null,
-                        tint = Color(0xFF00E5FF),
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        val textRoad = if (currentLocation.roadName.isNotBlank()) currentLocation.roadName else currentLocation.placeName
-                        Text(
-                            text = textRoad,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1
-                        )
-                        if (currentLocation.placeName.isNotBlank() && currentLocation.placeName != textRoad) {
-                            Text(
-                                text = currentLocation.placeName,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(alpha = 0.75f),
-                                maxLines = 1
-                            )
-                        }
+                Icon(
+                    Icons.Default.CenterFocusStrong,
+                    contentDescription = "Fit All Points",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // My Location Button
+            FloatingActionButton(
+                onClick = {
+                    if (currentLocation != null) {
+                        evaluateJs("window.flyToLocation(${currentLocation.latitude}, ${currentLocation.longitude}, 17);")
+                    } else {
+                        evaluateJs("window.fitAllBounds();")
                     }
-                }
+                },
+                modifier = Modifier
+                    .size(44.dp)
+                    .testTag("map_my_location_button"),
+                shape = CircleShape,
+                containerColor = Color(0xFF1E293B).copy(alpha = 0.92f),
+                contentColor = Color(0xFF00E5FF),
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp)
+            ) {
+                Icon(
+                    Icons.Default.MyLocation,
+                    contentDescription = "My Live Location",
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
 
-        // =========================================================================
-        // Selected Visited Place Popup Card (Interactive Pin Details)
-        // =========================================================================
+        // Bottom Selected Visit Card Popup with Real Street Route Action
         AnimatedVisibility(
             visible = selectedVisit != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(14.dp),
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                .padding(16.dp)
         ) {
-            selectedVisit?.let { v ->
+            selectedVisit?.let { visit ->
                 Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(20.dp)
-                        )
-                        .testTag("selected_visit_card")
+                        .testTag("visit_preview_bottom_sheet"),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    color = if (visit.departureTimeUtc == null) Color(0xFF10B981) else Color(0xFFF97316),
                                     modifier = Modifier.size(36.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             Icons.Default.LocationOn,
                                             contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
+                                            tint = Color.White,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.width(10.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = v.placeName,
+                                        text = visit.placeName,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        maxLines = 1
                                     )
                                     Text(
-                                        text = v.address,
+                                        text = visit.address,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1
+                                        maxLines = 2
                                     )
                                 }
                             }
 
                             IconButton(
                                 onClick = { selectedVisit = null },
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
                                     Icons.Default.Close,
-                                    contentDescription = "Close",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    contentDescription = "Close preview",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        val durMin = visit.durationSeconds / 60
+                        val durStr = if (durMin >= 60) "${durMin / 60}h ${durMin % 60}m" else "$durMin min"
+                        val isOngoing = visit.departureTimeUtc == null
+
+                        Text(
+                            text = if (isOngoing) "⏱️ Ongoing • ${durStr} so far" else "⏱️ Visited for $durStr",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isOngoing) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-                            val arrival = timeFormat.format(Date(v.arrivalTimeUtc))
-                            val departure = if (v.departureTimeUtc != null) {
-                                timeFormat.format(Date(v.departureTimeUtc))
-                            } else "Ongoing"
-
-                            val durMin = v.durationSeconds / 60
-                            val durHours = durMin / 60
-                            val durRemMin = durMin % 60
-                            val durationStr = if (durHours > 0) "${durHours}h ${durRemMin}m" else "${durRemMin}m"
-
-                            Column {
-                                Text(
-                                    text = "$arrival – $departure",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
+                            // Button to Route on Real Roads
+                            FilledTonalButton(
+                                onClick = {
+                                    routeToDestination(visit.latitude, visit.longitude)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("route_to_place_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.DirectionsCar,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Text(
-                                    text = "Stayed for $durationStr",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Real Road Route", maxLines = 1)
                             }
 
+                            // Button to View Place Details Screen
                             FilledTonalButton(
-                                onClick = { onVisitSelected(v) },
-                                shape = RoundedCornerShape(12.dp)
+                                onClick = {
+                                    onVisitSelected(visit)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.testTag("visit_details_button")
                             ) {
-                                Text("View Details")
+                                Text("Details")
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowForward,
